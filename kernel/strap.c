@@ -22,8 +22,6 @@ static void handle_syscall(trapframe *tf) {
   // IMPORTANT: return value should be returned to user app, or else, you will encounter
   // problems in later experiments!
   tf->regs.a0 = do_syscall(tf->regs.a0,tf->regs.a1,tf->regs.a2,tf->regs.s3,tf->regs.a4,tf->regs.a5,tf->regs.a6,tf->regs.a7);
-  panic( "call do_syscall to accomplish the syscall and lab1_1 here.\n" );
-
 }
 
 //
