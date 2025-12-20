@@ -27,13 +27,14 @@ ssize_t sys_user_print(const char* buf, size_t n) {
 //
 ssize_t sys_user_backtrace(int64_t n) {
   uint64 fp = current->trapframe->regs.s0;
+  // sprint("fp: %lx, n: %ld\n", fp, n);
   
   // Skip do_user_call frame
+  if (fp < DRAM_BASE) return 0;
   fp = *(uint64*)(fp - 16);
   
-  sprint("back trace the user app in the following:\n");
-  
   for (int i = 0; i < n; i++) {
+    if (fp < DRAM_BASE) break;
     uint64 ra = *(uint64*)(fp - 8);
     char *name = find_symbol_name(ra, current);
     if (name) {

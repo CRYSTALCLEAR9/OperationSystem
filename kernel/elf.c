@@ -151,7 +151,10 @@ char *find_symbol_name(uint64 addr, process *p) {
 
   // read elf header
   elf_header ehdr;
-  spike_file_pread(f, &ehdr, sizeof(ehdr), 0);
+  if (spike_file_pread(f, &ehdr, sizeof(ehdr), 0) != sizeof(ehdr)) {
+    spike_file_close(f);
+    return NULL;
+  }
 
   // read section headers
   uint64 shoff = ehdr.shoff;
@@ -164,7 +167,7 @@ char *find_symbol_name(uint64 addr, process *p) {
 
   // find symtab
   for (int i = 0; i < shnum; i++) {
-    spike_file_pread(f, &shdr, sizeof(shdr), shoff + i * sizeof(shdr));
+    if (spike_file_pread(f, &shdr, sizeof(shdr), shoff + i * sizeof(shdr)) != sizeof(shdr)) break;
     if (shdr.type == SHT_SYMTAB) {
       symtab_off = shdr.offset;
       symtab_size = shdr.size;
@@ -176,21 +179,23 @@ char *find_symbol_name(uint64 addr, process *p) {
   if (symtab_off && strtab_ndx) {
      // Get strtab offset
      uint64 strtab_off = 0;
-     spike_file_pread(f, &shdr, sizeof(shdr), shoff + strtab_ndx * sizeof(shdr));
-     strtab_off = shdr.offset;
-     
-     // Iterate symbols
-     elf_symbol sym;
-     uint64 num_syms = symtab_size / sizeof(sym);
-     for (uint64 i = 0; i < num_syms; i++) {
-       spike_file_pread(f, &sym, sizeof(sym), symtab_off + i * sizeof(sym));
-       if ((sym.info & 0xf) == STT_FUNC) {
-         if (addr >= sym.value && addr < sym.value + sym.size) {
-           // Found it
-           spike_file_pread(f, name_buf, sizeof(name_buf) - 1, strtab_off + sym.name);
-           name_buf[sizeof(name_buf) - 1] = '\0';
-           spike_file_close(f);
-           return name_buf;
+     if (spike_file_pread(f, &shdr, sizeof(shdr), shoff + strtab_ndx * sizeof(shdr)) == sizeof(shdr)) {
+       strtab_off = shdr.offset;
+       
+       // Iterate symbols
+       elf_symbol sym;
+       uint64 num_syms = symtab_size / sizeof(sym);
+       for (uint64 i = 0; i < num_syms; i++) {
+         if (spike_file_pread(f, &sym, sizeof(sym), symtab_off + i * sizeof(sym)) != sizeof(sym)) break;
+         if ((sym.info & 0xf) == STT_FUNC) {
+           if (addr >= sym.value && addr < sym.value + sym.size) {
+             // Found it
+             if (spike_file_pread(f, name_buf, sizeof(name_buf) - 1, strtab_off + sym.name) > 0) {
+               name_buf[sizeof(name_buf) - 1] = '\0';
+               spike_file_close(f);
+               return name_buf;
+             }
+           }
          }
        }
      }
