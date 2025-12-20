@@ -112,6 +112,7 @@ void load_bincode_from_host_elf(process *p) {
   if (!argc) panic("You need to specify the application program!\n");
 
   sprint("Application: %s\n", arg_bug_msg.argv[0]);
+  strcpy(p->app_name, arg_bug_msg.argv[0]);
 
   //elf loading. elf_ctx is defined in kernel/elf.h, used to track the loading process.
   elf_ctx elfloader;
@@ -137,4 +138,64 @@ void load_bincode_from_host_elf(process *p) {
   spike_file_close( info.f );
 
   sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+}
+
+//
+// find the name of the function that contains the address "addr"
+//
+char *find_symbol_name(uint64 addr, process *p) {
+  static char name_buf[128];
+  // open file
+  spike_file_t *f = spike_file_open(p->app_name, O_RDONLY, 0);
+  if (IS_ERR_VALUE(f)) return NULL;
+
+  // read elf header
+  elf_header ehdr;
+  spike_file_pread(f, &ehdr, sizeof(ehdr), 0);
+
+  // read section headers
+  uint64 shoff = ehdr.shoff;
+  uint16 shnum = ehdr.shnum;
+  elf_sect_header shdr;
+  
+  uint64 symtab_off = 0;
+  uint64 symtab_size = 0;
+  uint32 strtab_ndx = 0;
+
+  // find symtab
+  for (int i = 0; i < shnum; i++) {
+    spike_file_pread(f, &shdr, sizeof(shdr), shoff + i * sizeof(shdr));
+    if (shdr.type == SHT_SYMTAB) {
+      symtab_off = shdr.offset;
+      symtab_size = shdr.size;
+      strtab_ndx = shdr.link;
+      break;
+    }
+  }
+  
+  if (symtab_off && strtab_ndx) {
+     // Get strtab offset
+     uint64 strtab_off = 0;
+     spike_file_pread(f, &shdr, sizeof(shdr), shoff + strtab_ndx * sizeof(shdr));
+     strtab_off = shdr.offset;
+     
+     // Iterate symbols
+     elf_symbol sym;
+     uint64 num_syms = symtab_size / sizeof(sym);
+     for (uint64 i = 0; i < num_syms; i++) {
+       spike_file_pread(f, &sym, sizeof(sym), symtab_off + i * sizeof(sym));
+       if ((sym.info & 0xf) == STT_FUNC) {
+         if (addr >= sym.value && addr < sym.value + sym.size) {
+           // Found it
+           spike_file_pread(f, name_buf, sizeof(name_buf) - 1, strtab_off + sym.name);
+           name_buf[sizeof(name_buf) - 1] = '\0';
+           spike_file_close(f);
+           return name_buf;
+         }
+       }
+     }
+  }
+
+  spike_file_close(f);
+  return NULL;
 }

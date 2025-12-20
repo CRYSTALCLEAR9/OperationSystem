@@ -9,6 +9,7 @@
 #include "syscall.h"
 #include "string.h"
 #include "process.h"
+#include "elf.h"
 #include "util/functions.h"
 
 #include "spike_interface/spike_utils.h"
@@ -18,6 +19,30 @@
 //
 ssize_t sys_user_print(const char* buf, size_t n) {
   sprint(buf);
+  return 0;
+}
+
+//
+// implement the SYS_user_backtrace syscall
+//
+ssize_t sys_user_backtrace(int64_t n) {
+  uint64 fp = current->trapframe->regs.s0;
+  
+  // Skip do_user_call frame
+  fp = *(uint64*)(fp - 16);
+  
+  sprint("back trace the user app in the following:\n");
+  
+  for (int i = 0; i < n; i++) {
+    uint64 ra = *(uint64*)(fp - 8);
+    char *name = find_symbol_name(ra, current);
+    if (name) {
+      sprint("%s\n", name);
+    } else {
+      sprint("0x%lx\n", ra);
+    }
+    fp = *(uint64*)(fp - 16);
+  }
   return 0;
 }
 
@@ -41,6 +66,8 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_print((const char*)a1, a2);
     case SYS_user_exit:
       return sys_user_exit(a1);
+    case SYS_user_backtrace:
+      return sys_user_backtrace(a1);
     default:
       panic("Unknown syscall %ld \n", a0);
   }
