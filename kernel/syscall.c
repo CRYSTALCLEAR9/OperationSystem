@@ -27,22 +27,27 @@ ssize_t sys_user_print(const char* buf, size_t n) {
 //
 ssize_t sys_user_backtrace(int64_t n) {
   uint64 fp = current->trapframe->regs.s0;
-  // sprint("fp: %lx, n: %ld\n", fp, n);
   
   // Skip do_user_call frame
+  // do_user_call saves s0 at s0 - 8
   if (fp < DRAM_BASE) return 0;
-  fp = *(uint64*)(fp - 16);
+  fp = *(uint64*)(fp - 8);
   
   for (int i = 0; i < n; i++) {
     if (fp < DRAM_BASE) break;
+    // For standard functions (like print_backtrace, f8, etc.):
+    // ra is at s0 - 8
+    // prev_fp is at s0 - 16
     uint64 ra = *(uint64*)(fp - 8);
+    uint64 prev_fp = *(uint64*)(fp - 16);
+    
     char *name = find_symbol_name(ra, current);
     if (name) {
       sprint("%s\n", name);
     } else {
       sprint("0x%lx\n", ra);
     }
-    fp = *(uint64*)(fp - 16);
+    fp = prev_fp;
   }
   return 0;
 }
