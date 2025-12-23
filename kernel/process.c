@@ -157,6 +157,11 @@ int free_process( process* proc ) {
   // as it is different from regular OS, which needs to run 7x24.
   proc->status = ZOMBIE;
 
+  if (proc->parent && proc->parent->status == BLOCKED) {
+      proc->parent->status = READY;
+      insert_to_ready_queue(proc->parent);
+  }
+
   return 0;
 }
 
@@ -193,21 +198,40 @@ int do_fork( process* parent)
         // address region of child to the physical pages that actually store the code
         // segment of parent process.
         // DO NOT COPY THE PHYSICAL PAGES, JUST MAP THEM.
-        map_pages(
-          child->pagetable,
-          parent->mapped_info[i].va,
-          parent->mapped_info[i].npages*PGSIZE,
-          lookup_pa(parent->pagetable,
-          parent->mapped_info[i].va),
-          prot_to_type(
-            PROT_EXEC|PROT_READ,1
-        ));
+        {
+          uint64 pa = lookup_pa(parent->pagetable, parent->mapped_info[i].va);
+          map_pages(
+            child->pagetable,
+            parent->mapped_info[i].va,
+            parent->mapped_info[i].npages*PGSIZE,
+            pa,
+            prot_to_type(PROT_EXEC|PROT_READ,1)
+          );
+          sprint("do_fork map code segment at pa:%lx of parent to child at va:%lx.\n", pa, parent->mapped_info[i].va);
+        }
 
         // after mapping, register the vm region (do not delete codes below!)
         child->mapped_info[child->total_mapped_region].va = parent->mapped_info[i].va;
         child->mapped_info[child->total_mapped_region].npages =
           parent->mapped_info[i].npages;
         child->mapped_info[child->total_mapped_region].seg_type = CODE_SEGMENT;
+        child->total_mapped_region++;
+        break;
+      case DATA_SEGMENT:
+        // allocate and map pages for child
+        for (int j = 0; j < parent->mapped_info[i].npages; j++) {
+            void* pa = alloc_page();
+            uint64 va = parent->mapped_info[i].va + j * PGSIZE;
+            user_vm_map((pagetable_t)child->pagetable, va, PGSIZE, (uint64)pa,
+                        prot_to_type(PROT_WRITE | PROT_READ, 1));
+            // copy content
+            memcpy(pa, (void*)lookup_pa(parent->pagetable, va), PGSIZE);
+        }
+        
+        // register mapped info
+        child->mapped_info[child->total_mapped_region].va = parent->mapped_info[i].va;
+        child->mapped_info[child->total_mapped_region].npages = parent->mapped_info[i].npages;
+        child->mapped_info[child->total_mapped_region].seg_type = DATA_SEGMENT;
         child->total_mapped_region++;
         break;
     }
@@ -219,4 +243,39 @@ int do_fork( process* parent)
   insert_to_ready_queue( child );
 
   return child->pid;
+}
+//
+// implement wait syscall.
+//
+int do_wait(int pid) {
+  while (1) {
+    int have_kids = 0;
+    int pid_found = 0;
+    process* p;
+    
+    for (int i = 0; i < NPROC; i++) {
+      p = &procs[i];
+      if (p->parent == current) {
+        have_kids = 1;
+        if (pid == -1 || p->pid == pid) {
+          if (p->status == ZOMBIE) {
+            // Found a zombie child
+            int child_pid = p->pid;
+            p->status = FREE;
+            // TODO: free memory?
+            return child_pid;
+          }
+          pid_found = 1;
+        }
+      }
+    }
+    
+    if (!have_kids || (pid != -1 && !pid_found)) {
+      return -1; // No children or specific child not found
+    }
+    
+    // Wait for children to exit
+    current->status = BLOCKED;
+    schedule();
+  }
 }
