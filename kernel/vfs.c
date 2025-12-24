@@ -721,3 +721,43 @@ struct vinode *default_alloc_vinode(struct super_block *sb) {
 }
 
 struct file_system_type *fs_list[MAX_SUPPORTED_FS];
+
+//
+// convert a relative path to an absolute path
+//
+void make_abs_path(const char *cwd, const char *path, char *abs_path) {
+  char temp[MAX_PATH_LEN];
+  char *stack[MAX_PATH_LEN];
+  int top = 0;
+
+  // 1. Construct the full path (potentially with . and ..)
+  if (path[0] == '/') {
+    strcpy(temp, path);
+  } else {
+    strcpy(temp, cwd);
+    if (temp[strlen(temp) - 1] != '/') {
+      strcat(temp, "/");
+    }
+    strcat(temp, path);
+  }
+
+  // 2. Normalize the path
+  char *token = strtok(temp, "/");
+  while (token != NULL) {
+    if (strcmp(token, ".") == 0) {
+      // ignore
+    } else if (strcmp(token, "..") == 0) {
+      if (top > 0) top--;
+    } else {
+      stack[top++] = token;
+    }
+    token = strtok(NULL, "/");
+  }
+
+  // 3. Reconstruct the absolute path
+  strcpy(abs_path, "/");
+  for (int i = 0; i < top; i++) {
+    if (i > 0) strcat(abs_path, "/");
+    strcat(abs_path, stack[i]);
+  }
+}

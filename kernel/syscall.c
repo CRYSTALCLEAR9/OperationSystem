@@ -101,7 +101,9 @@ ssize_t sys_user_yield() {
 //
 ssize_t sys_user_open(char *pathva, int flags) {
   char* pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_open(pathpa, flags);
+  char abs_path[MAX_PATH_LEN];
+  make_abs_path(current->cwd, pathpa, abs_path);
+  return do_open(abs_path, flags);
 }
 
 //
@@ -171,7 +173,9 @@ ssize_t sys_user_close(int fd) {
 //
 ssize_t sys_user_opendir(char * pathva){
   char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_opendir(pathpa);
+  char abs_path[MAX_PATH_LEN];
+  make_abs_path(current->cwd, pathpa, abs_path);
+  return do_opendir(abs_path);
 }
 
 //
@@ -187,7 +191,9 @@ ssize_t sys_user_readdir(int fd, struct dir *vdir){
 //
 ssize_t sys_user_mkdir(char * pathva){
   char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_mkdir(pathpa);
+  char abs_path[MAX_PATH_LEN];
+  make_abs_path(current->cwd, pathpa, abs_path);
+  return do_mkdir(abs_path);
 }
 
 //
@@ -203,7 +209,11 @@ ssize_t sys_user_closedir(int fd){
 ssize_t sys_user_link(char * vfn1, char * vfn2){
   char * pfn1 = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)vfn1);
   char * pfn2 = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)vfn2);
-  return do_link(pfn1, pfn2);
+  char abs_path1[MAX_PATH_LEN];
+  char abs_path2[MAX_PATH_LEN];
+  make_abs_path(current->cwd, pfn1, abs_path1);
+  make_abs_path(current->cwd, pfn2, abs_path2);
+  return do_link(abs_path1, abs_path2);
 }
 
 //
@@ -211,7 +221,37 @@ ssize_t sys_user_link(char * vfn1, char * vfn2){
 //
 ssize_t sys_user_unlink(char * vfn){
   char * pfn = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)vfn);
-  return do_unlink(pfn);
+  char abs_path[MAX_PATH_LEN];
+  make_abs_path(current->cwd, pfn, abs_path);
+  return do_unlink(abs_path);
+}
+
+//
+// read current working directory
+//
+ssize_t sys_user_rcwd(char *pathva) {
+  char *pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
+  strcpy(pathpa, current->cwd);
+  return 0;
+}
+
+//
+// change current working directory
+//
+ssize_t sys_user_ccwd(const char *pathva) {
+  char *pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)pathva);
+  char abs_path[MAX_PATH_LEN];
+  make_abs_path(current->cwd, pathpa, abs_path);
+  
+  // Verify if the directory exists.
+  struct file *dir = vfs_opendir(abs_path);
+  if (dir == NULL) {
+    return -1;
+  }
+  vfs_closedir(dir);
+  
+  strcpy(current->cwd, abs_path);
+  return 0;
 }
 
 //
@@ -262,6 +302,11 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_link((char *)a1, (char *)a2);
     case SYS_user_unlink:
       return sys_user_unlink((char *)a1);
+    // added @lab4_4
+    case SYS_user_rcwd:
+      return sys_user_rcwd((char *)a1);
+    case SYS_user_ccwd:
+      return sys_user_ccwd((char *)a1);
     default:
       panic("Unknown syscall %ld \n", a0);
   }

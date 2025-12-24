@@ -144,6 +144,9 @@ process* alloc_process() {
   procs[i].user_heap.heap_bottom = USER_FREE_ADDRESS_START;
   procs[i].user_heap.free_pages_count = 0;
 
+  // initialize the process's cwd
+  strcpy(procs[i].cwd, "/");
+
   // map user heap in userspace
   procs[i].mapped_info[HEAP_SEGMENT].va = USER_FREE_ADDRESS_START;
   procs[i].mapped_info[HEAP_SEGMENT].npages = 0;  // no pages are mapped to heap yet.

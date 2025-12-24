@@ -3,6 +3,7 @@
 
 #include "riscv.h"
 #include "proc_file.h"
+#include "vfs.h"
 
 typedef struct trapframe_t {
   // space to store context (all common registers)
@@ -93,6 +94,9 @@ typedef struct process_t {
 
   // file system. added @lab4_1
   proc_file_management *pfiles;
+
+  // current working directory. added @lab4_4
+  char cwd[MAX_PATH_LEN];
 }process;
 
 // switch to run user app
