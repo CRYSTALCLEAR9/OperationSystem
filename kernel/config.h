@@ -20,4 +20,7 @@
 // the trap frame used to assemble the user "process"
 #define USER_TRAP_FRAME 0x81300000
 
+// per-hart user memory space stride (app0 at 0x81xx..., app1 at 0x85xx...)
+#define USER_SPACE_STRIDE 0x04000000
+
 #endif

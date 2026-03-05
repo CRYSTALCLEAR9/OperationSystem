@@ -20,14 +20,14 @@ extern char smode_trap_vector[];
 extern void return_to_user(trapframe*);
 
 // current points to the currently running user-mode application.
-process* current = NULL;
+process* current[NCPU] = {0};
 
 //
 // switch to a user-mode process
 //
 void switch_to(process* proc) {
   assert(proc);
-  current = proc;
+  current[proc->hartid] = proc;
 
   // write the smode_trap_vector (64-bit func. address) defined in kernel/strap_vector.S
   // to the stvec privilege register, such that trap handler pointed by smode_trap_vector
@@ -50,6 +50,9 @@ void switch_to(process* proc) {
 
   // set S Exception Program Counter (sepc register) to the elf entry pc.
   write_csr(sepc, proc->trapframe->epc);
+
+  // keep tp as hartid for kernel/user transitions in this lab.
+  write_tp(proc->hartid);
 
   // return_to_user() is defined in kernel/strap_vector.S. switch to user mode with sret.
   return_to_user(proc->trapframe);

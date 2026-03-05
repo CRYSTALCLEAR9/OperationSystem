@@ -21,10 +21,12 @@ typedef struct process_t {
   uint64 kstack;
   // trapframe storing the context of a (User mode) process.
   trapframe* trapframe;
+  // hart id that runs this process.
+  uint64 hartid;
 }process;
 
 void switch_to(process*);
 
-extern process* current;
+extern process* current[];
 
 #endif
