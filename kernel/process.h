@@ -3,6 +3,15 @@
 
 #include "riscv.h"
 
+#define HEAP_MAX_BLOCKS 256
+
+typedef struct heap_block_t {
+  uint64 va;
+  uint64 size;
+  int used;
+  int valid;
+} heap_block;
+
 typedef struct trapframe_t {
   // space to store context (all common registers)
   /* offset:0   */ riscv_regs regs;
@@ -26,6 +35,12 @@ typedef struct process_t {
   pagetable_t pagetable;
   // trapframe storing the context of a (User mode) process.
   trapframe* trapframe;
+
+  // user heap range: [heap_base, heap_end)
+  uint64 heap_base;
+  uint64 heap_end;
+  int heap_initialized;
+  heap_block heap_blocks[HEAP_MAX_BLOCKS];
 }process;
 
 // switch to run user app
@@ -34,7 +49,8 @@ void switch_to(process*);
 // current running process
 extern process* current;
 
-// address of the first free page in our simple heap. added @lab2_2
-extern uint64 g_ufree_page;
+void process_heap_init(process* proc);
+uint64 process_heap_alloc(process* proc, uint64 size);
+int process_heap_free(process* proc, uint64 va);
 
 #endif

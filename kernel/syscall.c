@@ -37,24 +37,18 @@ ssize_t sys_user_exit(uint64 code) {
 }
 
 //
-// maybe, the simplest implementation of malloc in the world ... added @lab2_2
-//
-uint64 sys_user_allocate_page() {
-  void* pa = alloc_page();
-  uint64 va = g_ufree_page;
-  g_ufree_page += PGSIZE;
-  user_vm_map((pagetable_t)current->pagetable, va, PGSIZE, (uint64)pa,
-         prot_to_type(PROT_WRITE | PROT_READ, 1));
-
-  return va;
+// compact heap allocation syscall: allocates requested bytes from process heap.
+uint64 sys_user_allocate_page(uint64 size) {
+  assert(current);
+  return process_heap_alloc(current, size);
 }
 
 //
-// reclaim a page, indicated by "va". added @lab2_2
+// free a heap block indicated by "va".
 //
 uint64 sys_user_free_page(uint64 va) {
-  user_vm_unmap((pagetable_t)current->pagetable, va, PGSIZE, 1);
-  return 0;
+  assert(current);
+  return process_heap_free(current, va);
 }
 
 //
@@ -69,7 +63,7 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_exit(a1);
     // added @lab2_2
     case SYS_user_allocate_page:
-      return sys_user_allocate_page();
+      return sys_user_allocate_page(a1);
     case SYS_user_free_page:
       return sys_user_free_page(a1);
     default:
