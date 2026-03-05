@@ -29,28 +29,36 @@ static void handle_timer() {
 //
 void handle_mtrap() {
   uint64 mcause = read_csr(mcause);
+  uint64 mepc = read_csr(mepc);
   switch (mcause) {
     case CAUSE_MTIMER:
       handle_timer();
       break;
     case CAUSE_FETCH_ACCESS:
+      print_runtime_error(mepc);
       handle_instruction_access_fault();
       break;
     case CAUSE_LOAD_ACCESS:
+      print_runtime_error(mepc);
       handle_load_access_fault();
+      break;
     case CAUSE_STORE_ACCESS:
+      print_runtime_error(mepc);
       handle_store_access_fault();
       break;
     case CAUSE_ILLEGAL_INSTRUCTION:
       // TODO (lab1_2): call handle_illegal_instruction to implement illegal instruction
       // interception, and finish lab1_2.
+      print_runtime_error(mepc);
       handle_illegal_instruction();
 
       break;
     case CAUSE_MISALIGNED_LOAD:
+      print_runtime_error(mepc);
       handle_misaligned_load();
       break;
     case CAUSE_MISALIGNED_STORE:
+      print_runtime_error(mepc);
       handle_misaligned_store();
       break;
 

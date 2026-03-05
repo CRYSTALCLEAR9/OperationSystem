@@ -13,6 +13,12 @@ typedef struct elf_info_t {
   process *p;
 } elf_info;
 
+#define DEBUG_LINE_STORE_SIZE (1 << 20)
+#define SHSTRTAB_STORE_SIZE (1 << 15)
+
+static char g_debug_line_store[DEBUG_LINE_STORE_SIZE];
+static char g_shstrtab_store[SHSTRTAB_STORE_SIZE];
+
 //
 // the implementation of allocater. allocates memory space for later segment loading
 //
@@ -222,44 +228,32 @@ elf_status elf_load(elf_ctx *ctx) {
   return EL_OK;
 }
 
-//
-// load the debug line section from the elf file
-//
-static elf_status load_debug_line(elf_ctx *ctx) {
-  elf_prog_header ph;
-  uint64 max_va = 0;
+static elf_status elf_load_debug_line(elf_ctx *ctx) {
+    if (ctx->ehdr.shoff == 0 || ctx->ehdr.shnum == 0) return EL_OK;
+    if (ctx->ehdr.shstrndx >= ctx->ehdr.shnum) return EL_ERR;
 
-  // scan through all section headers to find the highest address
-  for (int i = 0; i < ctx->ehdr.phnum; i++) {
-    if (elf_fpread(ctx, &ph, sizeof(ph), ctx->ehdr.phoff + i * sizeof(ph)) != sizeof(ph)) return EL_EIO;
-    if (ph.type == ELF_PROG_LOAD) {
-      if (ph.vaddr + ph.memsz > max_va) max_va = ph.vaddr + ph.memsz;
-    }
-  }
+    elf_sect_header shstr_hdr;
+    uint64 shstr_hdr_off = ctx->ehdr.shoff + (uint64)ctx->ehdr.shstrndx * sizeof(elf_sect_header);
+    if (elf_fpread(ctx, &shstr_hdr, sizeof(shstr_hdr), shstr_hdr_off) != sizeof(shstr_hdr)) return EL_EIO;
+    if (shstr_hdr.size > SHSTRTAB_STORE_SIZE) return EL_ERR;
+    if (elf_fpread(ctx, g_shstrtab_store, shstr_hdr.size, shstr_hdr.offset) != shstr_hdr.size) return EL_EIO;
 
-  // allow some space? alignment.
-  max_va = (max_va + 7) & ~7;
+    for (int i = 0; i < ctx->ehdr.shnum; i++) {
+        elf_sect_header shdr;
+        uint64 shdr_off = ctx->ehdr.shoff + (uint64)i * sizeof(elf_sect_header);
+        if (elf_fpread(ctx, &shdr, sizeof(shdr), shdr_off) != sizeof(shdr)) return EL_EIO;
+        if (shdr.name >= shstr_hdr.size) continue;
 
-  // read section header string table header
-  elf_sect_header sh_str;
-  if (elf_fpread(ctx, &sh_str, sizeof(sh_str), ctx->ehdr.shoff + ctx->ehdr.shstrndx * sizeof(sh_str)) != sizeof(sh_str)) return EL_EIO;
+        char *section_name = g_shstrtab_store + shdr.name;
+        if (strcmp(section_name, ".debug_line") != 0) continue;
+        if (shdr.size > DEBUG_LINE_STORE_SIZE) return EL_ERR;
 
-  char *str_tab = (char *)max_va;
-  if (elf_fpread(ctx, str_tab, sh_str.size, sh_str.offset) != sh_str.size) return EL_EIO;
-
-  elf_sect_header sh;
-  for (int i = 0; i < ctx->ehdr.shnum; i++) {
-    if (elf_fpread(ctx, &sh, sizeof(sh), ctx->ehdr.shoff + i * sizeof(sh)) != sizeof(sh)) return EL_EIO;
-    if (sh.type != 0) {
-      if (strcmp(str_tab + sh.name, ".debug_line") == 0) {
-        char *debug_line = (char *)max_va;
-        if (elf_fpread(ctx, debug_line, sh.size, sh.offset) != sh.size) return EL_EIO;
-        make_addr_line(ctx, debug_line, sh.size);
+        if (elf_fpread(ctx, g_debug_line_store, shdr.size, shdr.offset) != shdr.size) return EL_EIO;
+        make_addr_line(ctx, g_debug_line_store, shdr.size);
         return EL_OK;
-      }
     }
-  }
-  return EL_OK;
+
+    return EL_OK;
 }
 
 typedef union {
@@ -317,8 +311,9 @@ void load_bincode_from_host_elf(process *p) {
   // load elf. elf_load() is defined above.
   if (elf_load(&elfloader) != EL_OK) panic("Fail on loading elf.\n");
 
-  // load debug line
-  if (load_debug_line(&elfloader) != EL_OK) panic("Fail on loading debug line.\n");
+    // parse debug line info to support runtime source location output.
+    if (elf_load_debug_line(&elfloader) != EL_OK)
+        panic("Fail on loading .debug_line section.\n");
 
   // entry (virtual, also physical in lab1_x) address
   p->trapframe->epc = elfloader.ehdr.entry;

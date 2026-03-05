@@ -36,6 +36,8 @@ typedef struct process_t {
   char *debugline; char **dir; code_file *file; addr_line *line; int line_ind;
 }process;
 
+void print_runtime_error(uint64 fault_pc);
+
 void switch_to(process*);
 
 extern process* current;
