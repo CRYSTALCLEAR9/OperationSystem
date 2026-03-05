@@ -222,6 +222,46 @@ elf_status elf_load(elf_ctx *ctx) {
   return EL_OK;
 }
 
+//
+// load the debug line section from the elf file
+//
+static elf_status load_debug_line(elf_ctx *ctx) {
+  elf_prog_header ph;
+  uint64 max_va = 0;
+
+  // scan through all section headers to find the highest address
+  for (int i = 0; i < ctx->ehdr.phnum; i++) {
+    if (elf_fpread(ctx, &ph, sizeof(ph), ctx->ehdr.phoff + i * sizeof(ph)) != sizeof(ph)) return EL_EIO;
+    if (ph.type == ELF_PROG_LOAD) {
+      if (ph.vaddr + ph.memsz > max_va) max_va = ph.vaddr + ph.memsz;
+    }
+  }
+
+  // allow some space? alignment.
+  max_va = (max_va + 7) & ~7;
+
+  // read section header string table header
+  elf_sect_header sh_str;
+  if (elf_fpread(ctx, &sh_str, sizeof(sh_str), ctx->ehdr.shoff + ctx->ehdr.shstrndx * sizeof(sh_str)) != sizeof(sh_str)) return EL_EIO;
+
+  char *str_tab = (char *)max_va;
+  if (elf_fpread(ctx, str_tab, sh_str.size, sh_str.offset) != sh_str.size) return EL_EIO;
+
+  elf_sect_header sh;
+  for (int i = 0; i < ctx->ehdr.shnum; i++) {
+    if (elf_fpread(ctx, &sh, sizeof(sh), ctx->ehdr.shoff + i * sizeof(sh)) != sizeof(sh)) return EL_EIO;
+    if (sh.type != 0) {
+      if (strcmp(str_tab + sh.name, ".debug_line") == 0) {
+        char *debug_line = (char *)max_va;
+        if (elf_fpread(ctx, debug_line, sh.size, sh.offset) != sh.size) return EL_EIO;
+        make_addr_line(ctx, debug_line, sh.size);
+        return EL_OK;
+      }
+    }
+  }
+  return EL_OK;
+}
+
 typedef union {
   uint64 buf[MAX_CMDLINE_ARGS];
   char *argv[MAX_CMDLINE_ARGS];
@@ -276,6 +316,9 @@ void load_bincode_from_host_elf(process *p) {
 
   // load elf. elf_load() is defined above.
   if (elf_load(&elfloader) != EL_OK) panic("Fail on loading elf.\n");
+
+  // load debug line
+  if (load_debug_line(&elfloader) != EL_OK) panic("Fail on loading debug line.\n");
 
   // entry (virtual, also physical in lab1_x) address
   p->trapframe->epc = elfloader.ehdr.entry;
