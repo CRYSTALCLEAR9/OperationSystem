@@ -1,6 +1,20 @@
 #ifndef _SYNC_UTILS_H_
 #define _SYNC_UTILS_H_
 
+static inline void spin_lock(volatile int *lock) {
+  int old;
+  do {
+    asm volatile("amoswap.w.aq %0, %2, (%1)\n"
+                 : "=r"(old)
+                 : "r"(lock), "r"(1)
+                 : "memory");
+  } while (old != 0);
+}
+
+static inline void spin_unlock(volatile int *lock) {
+  asm volatile("amoswap.w.rl x0, x0, (%0)\n" : : "r"(lock) : "memory");
+}
+
 static inline void sync_barrier(volatile int *counter, int all) {
 
   int local;

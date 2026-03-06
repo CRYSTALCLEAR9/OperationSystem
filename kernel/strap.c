@@ -25,7 +25,8 @@ static void handle_syscall(trapframe *tf) {
   // kernel/syscall.c) to conduct real operations of the kernel side for a syscall.
   // IMPORTANT: return value should be returned to user app, or else, you will encounter
   // problems in later experiments!
-  tf->regs.a0 = do_syscall(tf->regs.a0,tf->regs.a1,tf->regs.a2,tf->regs.s3,tf->regs.a4,tf->regs.a5,tf->regs.a6,tf->regs.a7);
+  tf->regs.a0 = do_syscall(tf->regs.a0, tf->regs.a1, tf->regs.a2, tf->regs.a3,
+                           tf->regs.a4, tf->regs.a5, tf->regs.a6, tf->regs.a7);
 
 }
 
@@ -52,13 +53,16 @@ void handle_mtimer_trap() {
 //
 void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
   sprint("handle_page_fault: %lx\n", stval);
+  uint64 hartid = read_tp();
+  process *proc = current[hartid];
+  assert(proc);
   switch (mcause) {
     case CAUSE_STORE_PAGE_FAULT:
       // TODO (lab2_3): implement the operations that solve the page fault to
       // dynamically increase application stack.
       // hint: first allocate a new physical page, and then, maps the new page to the
       // virtual address that causes the page fault.
-      map_pages(current->pagetable,ROUNDDOWN(stval,PGSIZE),PGSIZE,(uint64)alloc_page(),prot_to_type(PROT_READ|PROT_WRITE,1));
+      map_pages(proc->pagetable,ROUNDDOWN(stval,PGSIZE),PGSIZE,(uint64)alloc_page(),prot_to_type(PROT_READ|PROT_WRITE,1));
 
       break;
     default:
@@ -76,9 +80,11 @@ void smode_trap_handler(void) {
   // we will consider other previous case in lab1_3 (interrupt).
   if ((read_csr(sstatus) & SSTATUS_SPP) != 0) panic("usertrap: not from user mode");
 
-  assert(current);
+  uint64 hartid = read_tp();
+  process *proc = current[hartid];
+  assert(proc);
   // save user process counter.
-  current->trapframe->epc = read_csr(sepc);
+  proc->trapframe->epc = read_csr(sepc);
 
   // if the cause of trap is syscall from user application.
   // read_csr() and CAUSE_USER_ECALL are macros defined in kernel/riscv.h
@@ -87,7 +93,7 @@ void smode_trap_handler(void) {
   // use switch-case instead of if-else, as there are many cases since lab2_3.
   switch (cause) {
     case CAUSE_USER_ECALL:
-      handle_syscall(current->trapframe);
+      handle_syscall(proc->trapframe);
       break;
     case CAUSE_MTIMER_S_TRAP:
       handle_mtimer_trap();
@@ -106,5 +112,5 @@ void smode_trap_handler(void) {
   }
 
   // continue (come back to) the execution of current process.
-  switch_to(current);
+  switch_to(proc);
 }

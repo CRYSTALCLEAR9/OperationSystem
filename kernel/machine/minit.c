@@ -29,6 +29,20 @@ extern uint64 g_mem_size;
 // struct riscv_regs is define in kernel/riscv.h, and g_itrframe is used to save
 // registers when interrupt hapens in M mode. added @lab1_2
 riscv_regs g_itrframe;
+static volatile int g_mmode_init_ready[NCPU] = { 0 };
+
+static void wait_all_harts_ready(volatile int *ready) {
+  for (;;) {
+    int all = 1;
+    for (int i = 0; i < NCPU; i++) {
+      if (ready[i] == 0) {
+        all = 0;
+        break;
+      }
+    }
+    if (all) break;
+  }
+}
 
 //
 // get the information of HTIF (calling interface) and the emulated memory by
@@ -99,7 +113,13 @@ void m_start(uintptr_t hartid, uintptr_t dtb) {
 
   // init HTIF (Host-Target InterFace) and memory by using the Device Table Blob (DTB)
   // init_dtb() is defined above.
-  init_dtb(dtb);
+  if (hartid == 0) {
+    init_dtb(dtb);
+  }
+
+  // Wait until global device/memory probing is complete.
+  g_mmode_init_ready[hartid] = 1;
+  wait_all_harts_ready(g_mmode_init_ready);
 
   // save the address of trap frame for interrupt in M mode to "mscratch". added @lab1_2
   write_csr(mscratch, &g_itrframe);
@@ -113,6 +133,9 @@ void m_start(uintptr_t hartid, uintptr_t dtb) {
 
   // setup trap handling vector for machine mode. added @lab1_2
   write_csr(mtvec, (uint64)mtrapvec);
+
+  // cache hart id in tp, so lower privilege modes can get it without reading mhartid.
+  write_tp(hartid);
 
   // enable machine-mode interrupts. added @lab1_3
   write_csr(mstatus, read_csr(mstatus) | MSTATUS_MIE);

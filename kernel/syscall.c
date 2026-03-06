@@ -14,14 +14,31 @@
 #include "vmm.h"
 #include "spike_interface/spike_utils.h"
 
+static volatile int g_exit_ready[NCPU] = { 0 };
+
+static void wait_all_harts_ready(volatile int *ready) {
+  for (;;) {
+    int all = 1;
+    for (int i = 0; i < NCPU; i++) {
+      if (ready[i] == 0) {
+        all = 0;
+        break;
+      }
+    }
+    if (all) break;
+  }
+}
+
 //
 // implement the SYS_user_print syscall
 //
 ssize_t sys_user_print(const char* buf, size_t n) {
+  uint64 hartid = read_tp();
+  process *proc = current[hartid];
   // buf is now an address in user space of the given app's user stack,
   // so we have to transfer it into phisical address (kernel is running in direct mapping).
-  assert( current );
-  char* pa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)buf);
+  assert(proc);
+  char* pa = (char*)user_va_to_pa((pagetable_t)(proc->pagetable), (void*)buf);
   sprint(pa);
   return 0;
 }
@@ -30,23 +47,39 @@ ssize_t sys_user_print(const char* buf, size_t n) {
 // implement the SYS_user_exit syscall
 //
 ssize_t sys_user_exit(uint64 code) {
-  sprint("hartid = ?: User exit with code:%d.\n", code);
+  uint64 hartid = read_tp();
+  sprint("hartid = %ld: User exit with code: %d.\n", hartid, code);
+
+  // Wait until all running harts have exited user programs.
+  g_exit_ready[hartid] = 1;
+  wait_all_harts_ready(g_exit_ready);
+
   // in lab1, PKE considers only one app (one process). 
   // therefore, shutdown the system when the app calls exit()
-  sprint("hartid = ?: shutdown with code:%d.\n", code);
-  shutdown(code);
+  if (hartid == 0) {
+    sprint("hartid = %ld: shutdown with code: %d.\n", hartid, code);
+    shutdown(code);
+  }
+
+  while (1) {
+    asm volatile("wfi");
+  }
 }
 
 //
 // maybe, the simplest implementation of malloc in the world ... added @lab2_2
 //
 uint64 sys_user_allocate_page() {
+  uint64 hartid = read_tp();
+  process *proc = current[hartid];
+  assert(proc);
+
   void* pa = alloc_page();
-  uint64 va = g_ufree_page;
-  g_ufree_page += PGSIZE;
-  user_vm_map((pagetable_t)current->pagetable, va, PGSIZE, (uint64)pa,
+  uint64 va = proc->ufree_page;
+  proc->ufree_page += PGSIZE;
+  user_vm_map((pagetable_t)proc->pagetable, va, PGSIZE, (uint64)pa,
          prot_to_type(PROT_WRITE | PROT_READ, 1));
-  sprint("hartid = ?: vaddr 0x%x is mapped to paddr 0x%x\n", va, pa);
+  sprint("hartid = %ld: vaddr 0x%x is mapped to paddr 0x%x\n", hartid, va, pa);
   return va;
 }
 
@@ -54,7 +87,10 @@ uint64 sys_user_allocate_page() {
 // reclaim a page, indicated by "va". added @lab2_2
 //
 uint64 sys_user_free_page(uint64 va) {
-  user_vm_unmap((pagetable_t)current->pagetable, va, PGSIZE, 1);
+  uint64 hartid = read_tp();
+  process *proc = current[hartid];
+  assert(proc);
+  user_vm_unmap((pagetable_t)proc->pagetable, va, PGSIZE, 1);
   return 0;
 }
 
