@@ -16,6 +16,114 @@
 
 #include "spike_interface/spike_utils.h"
 
+#define NSEM 16
+
+typedef struct semaphore_t {
+  int used;
+  int value;
+  process* wait_queue_head;
+  process* wait_queue_tail;
+} semaphore;
+
+static semaphore sem_pool[NSEM];
+
+static int sem_id_valid(int sem_id) {
+  return sem_id >= 0 && sem_id < NSEM && sem_pool[sem_id].used;
+}
+
+static void sem_waitq_push(semaphore* sem, process* proc) {
+  proc->queue_next = 0;
+  if (sem->wait_queue_tail == 0) {
+    sem->wait_queue_head = proc;
+    sem->wait_queue_tail = proc;
+    return;
+  }
+
+  sem->wait_queue_tail->queue_next = proc;
+  sem->wait_queue_tail = proc;
+}
+
+static process* sem_waitq_pop(semaphore* sem) {
+  process* proc = sem->wait_queue_head;
+  if (proc == 0) {
+    return 0;
+  }
+
+  sem->wait_queue_head = proc->queue_next;
+  if (sem->wait_queue_head == 0) {
+    sem->wait_queue_tail = 0;
+  }
+  proc->queue_next = 0;
+  return proc;
+}
+
+static int sem_new(int init_value) {
+  if (init_value < 0) {
+    return -1;
+  }
+
+  for (int i = 0; i < NSEM; i++) {
+    if (!sem_pool[i].used) {
+      sem_pool[i].used = 1;
+      sem_pool[i].value = init_value;
+      sem_pool[i].wait_queue_head = 0;
+      sem_pool[i].wait_queue_tail = 0;
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+static int sem_free(int sem_id) {
+  if (!sem_id_valid(sem_id)) {
+    return -1;
+  }
+
+  semaphore* sem = &sem_pool[sem_id];
+  if (sem->wait_queue_head != 0) {
+    return -1;
+  }
+
+  sem->used = 0;
+  sem->value = 0;
+  sem->wait_queue_tail = 0;
+  return 0;
+}
+
+static int sem_P(int sem_id) {
+  if (!sem_id_valid(sem_id)) {
+    return -1;
+  }
+
+  semaphore* sem = &sem_pool[sem_id];
+  sem->value--;
+  if (sem->value < 0) {
+    current->status = BLOCKED;
+    sem_waitq_push(sem, current);
+    schedule();
+  }
+
+  return 0;
+}
+
+static int sem_V(int sem_id) {
+  if (!sem_id_valid(sem_id)) {
+    return -1;
+  }
+
+  semaphore* sem = &sem_pool[sem_id];
+  sem->value++;
+  if (sem->value <= 0) {
+    process* proc = sem_waitq_pop(sem);
+    if (proc) {
+      insert_to_ready_queue(proc);
+    }
+  }
+
+  return 0;
+}
+
 //
 // implement the SYS_user_print syscall
 //
@@ -95,6 +203,22 @@ ssize_t sys_user_yield() {
   return 0;
 }
 
+ssize_t sys_user_sem_new(int init_value) {
+  return sem_new(init_value);
+}
+
+ssize_t sys_user_sem_free(int sem_id) {
+  return sem_free(sem_id);
+}
+
+ssize_t sys_user_sem_P(int sem_id) {
+  return sem_P(sem_id);
+}
+
+ssize_t sys_user_sem_V(int sem_id) {
+  return sem_V(sem_id);
+}
+
 //
 // [a0]: the syscall number; [a1] ... [a7]: arguments to the syscalls.
 // returns the code of success, (e.g., 0 means success, fail for otherwise)
@@ -114,6 +238,14 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_fork();
     case SYS_user_yield:
       return sys_user_yield();
+    case SYS_user_sem_new:
+      return sys_user_sem_new(a1);
+    case SYS_user_sem_free:
+      return sys_user_sem_free(a1);
+    case SYS_user_sem_P:
+      return sys_user_sem_P(a1);
+    case SYS_user_sem_V:
+      return sys_user_sem_V(a1);
     default:
       panic("Unknown syscall %ld \n", a0);
   }
