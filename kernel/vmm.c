@@ -131,7 +131,7 @@ void kern_vm_init(void) {
   kern_vm_map(t_page_dir, KERN_BASE, DRAM_BASE, (uint64)_etext - KERN_BASE,
          prot_to_type(PROT_READ | PROT_EXEC, 0));
 
-  sprint("KERN_BASE 0x%lx\n", lookup_pa(t_page_dir, KERN_BASE));
+  // sprint("KERN_BASE 0x%lx", lookup_pa(t_page_dir, KERN_BASE));
 
   // also (direct) map remaining address space, to make them accessable from kernel.
   // this is important when kernel needs to access the memory content of user's app
@@ -139,7 +139,7 @@ void kern_vm_init(void) {
   kern_vm_map(t_page_dir, (uint64)_etext, (uint64)_etext, PHYS_TOP - (uint64)_etext,
          prot_to_type(PROT_READ | PROT_WRITE, 0));
 
-  sprint("physical address of _etext is: 0x%lx\n", lookup_pa(t_page_dir, (uint64)_etext));
+  // sprint("physical address of _etext is: 0x%lx", lookup_pa(t_page_dir, (uint64)_etext));
 
   g_kernel_pagetable = t_page_dir;
 }
@@ -159,8 +159,11 @@ void *user_va_to_pa(pagetable_t page_dir, void *va) {
   // (va & (1<<PGSHIFT -1)) means computing the offset of "va" inside its page.
   // Also, it is possible that "va" is not mapped at all. in such case, we can find
   // invalid PTE, and should return NULL.
-  panic( "You have to implement user_va_to_pa (convert user va to pa) to print messages in lab2_1.\n" );
-
+  pte_t* pte = page_walk(page_dir,(uint64)va,0);
+  if(pte == 0)
+      return 0;
+  uint64 pa = PTE2PA(*pte) + ((uint64)va & ((1 << PGSHIFT) -1));
+  return (void*)pa;
 }
 
 //
@@ -184,15 +187,22 @@ void user_vm_unmap(pagetable_t page_dir, uint64 va, uint64 size, int free) {
   // (use free_page() defined in pmm.c) the physical pages. lastly, invalidate the PTEs.
   // as naive_free reclaims only one page at a time, you only need to consider one page
   // to make user/app_naive_malloc to behave correctly.
-  panic( "You have to implement user_vm_unmap to free pages using naive_free in lab2_2.\n" );
-
+    uint64 first, last;
+    pte_t *pte;
+    for (first = ROUNDDOWN(va, PGSIZE), last = ROUNDDOWN(va + size - 1, PGSIZE);
+         first <= last; first += PGSIZE) {
+        if ((pte = page_walk(page_dir, first, 0)) == 0) return;
+        uint64 pa = PTE2PA(*pte);
+        if(free)
+            free_page((void*)pa);
+        *pte = *pte & (~PTE_V);
+    }
 }
-
 //
 // debug function, print the vm space of a process. added @lab3_1
 //
 void print_proc_vmspace(process* proc) {
-  sprint( "======\tbelow is the vm space of process%d\t========\n", proc->pid );
+  sprint( "======\tbelow is the vm space of process%d\t========", proc->pid );
   for( int i=0; i<proc->total_mapped_region; i++ ){
     sprint( "-va:%lx, npage:%d, ", proc->mapped_info[i].va, proc->mapped_info[i].npages);
     switch(proc->mapped_info[i].seg_type){
@@ -202,6 +212,7 @@ void print_proc_vmspace(process* proc) {
       case CONTEXT_SEGMENT: sprint( "type: TRAPFRAME SEGMENT" ); break;
       case SYSTEM_SEGMENT: sprint( "type: USER KERNEL STACK SEGMENT" ); break;
     }
-    sprint( ", mapped to pa:%lx\n", lookup_pa(proc->pagetable, proc->mapped_info[i].va) );
+    sprint( ", mapped to pa:%lx", lookup_pa(proc->pagetable, proc->mapped_info[i].va) );
   }
 }
+

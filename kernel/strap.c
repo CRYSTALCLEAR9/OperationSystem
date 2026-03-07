@@ -10,6 +10,7 @@
 #include "vmm.h"
 #include "sched.h"
 #include "util/functions.h"
+#include "string.h"
 
 #include "spike_interface/spike_utils.h"
 
@@ -26,7 +27,7 @@ static void handle_syscall(trapframe *tf) {
   // kernel/syscall.c) to conduct real operations of the kernel side for a syscall.
   // IMPORTANT: return value should be returned to user app, or else, you will encounter
   // problems in later experiments!
-  panic( "call do_syscall to accomplish the syscall and lab1_1 here.\n" );
+  tf->regs.a0 = do_syscall(tf->regs.a0,tf->regs.a1,tf->regs.a2,tf->regs.s3,tf->regs.a4,tf->regs.a5,tf->regs.a6,tf->regs.a7);
 
 }
 
@@ -37,11 +38,12 @@ static uint64 g_ticks = 0;
 // added @lab1_3
 //
 void handle_mtimer_trap() {
-  sprint("Ticks %d\n", g_ticks);
+  sprint("Ticks %d", g_ticks);
   // TODO (lab1_3): increase g_ticks to record this "tick", and then clear the "SIP"
   // field in sip register.
   // hint: use write_csr to disable the SIP_SSIP bit in sip.
-  panic( "lab1_3: increase g_ticks by one, and clear SIP field in sip register.\n" );
+  g_ticks++;
+  write_csr(sip,read_csr(sip) & (~SIP_SSIP));
 
 }
 
@@ -51,18 +53,37 @@ void handle_mtimer_trap() {
 // stval: the virtual address that causes pagefault when being accessed.
 //
 void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
-  sprint("handle_page_fault: %lx\n", stval);
+  sprint("handle_page_fault: %lx", stval);
   switch (mcause) {
     case CAUSE_STORE_PAGE_FAULT:
-      // TODO (lab2_3): implement the operations that solve the page fault to
-      // dynamically increase application stack.
-      // hint: first allocate a new physical page, and then, maps the new page to the
-      // virtual address that causes the page fault.
-      panic( "You need to implement the operations that actually handle the page fault in lab2_3.\n" );
+      {
+        uint64 va = ROUNDDOWN(stval, PGSIZE);
+        pte_t *pte = page_walk(current->pagetable, va, 0);
+
+        // If this is a COW page, allocate a private page and remap as writable.
+        if (pte && (*pte & PTE_V) && (*pte & PTE_COW)) {
+          uint64 old_pa = PTE2PA(*pte);
+          void *new_pa = alloc_page();
+          if (new_pa == 0) panic("COW fault: out of memory");
+
+          memcpy(new_pa, (void *)old_pa, PGSIZE);
+
+          uint64 new_flags = PTE_FLAGS(*pte);
+          new_flags = (new_flags | PTE_W | PTE_D) & (~PTE_COW);
+          *pte = PA2PTE((uint64)new_pa) | new_flags;
+          free_page((void *)old_pa);
+          flush_tlb();
+          break;
+        }
+
+        // Fallback for demand paging (e.g., stack growth in previous labs).
+        map_pages(current->pagetable, va, PGSIZE, (uint64)alloc_page(),
+                  prot_to_type(PROT_READ|PROT_WRITE, 1));
+      }
 
       break;
     default:
-      sprint("unknown page fault.\n");
+      sprint("unknown page fault.");
       break;
   }
 }
@@ -75,7 +96,12 @@ void rrsched() {
   // hint: increase the tick_count member of current process by one, if it is bigger than
   // TIME_SLICE_LEN (means it has consumed its time slice), change its status into READY,
   // place it in the rear of ready queue, and finally schedule next process to run.
-  panic( "You need to further implement the timer handling in lab3_3.\n" );
+  current->tick_count++;
+  if(current->tick_count >= TIME_SLICE_LEN){
+      current->tick_count = 0;
+      insert_to_ready_queue(current);
+      schedule();
+  }
 
 }
 
@@ -113,8 +139,8 @@ void smode_trap_handler(void) {
       handle_user_page_fault(cause, read_csr(sepc), read_csr(stval));
       break;
     default:
-      sprint("smode_trap_handler(): unexpected scause %p\n", read_csr(scause));
-      sprint("            sepc=%p stval=%p\n", read_csr(sepc), read_csr(stval));
+      sprint("smode_trap_handler(): unexpected scause %p", read_csr(scause));
+      sprint("            sepc=%p stval=%p", read_csr(sepc), read_csr(stval));
       panic( "unexpected exception happened.\n" );
       break;
   }

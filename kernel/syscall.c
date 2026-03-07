@@ -32,7 +32,7 @@ ssize_t sys_user_print(const char* buf, size_t n) {
 // implement the SYS_user_exit syscall
 //
 ssize_t sys_user_exit(uint64 code) {
-  sprint("User exit with code:%d.\n", code);
+  sprint("User exit with code:%d.", code);
   // reclaim the current process, and reschedule. added @lab3_1
   free_process( current );
   schedule();
@@ -77,7 +77,7 @@ uint64 sys_user_free_page(uint64 va) {
 // kerenl entry point of naive_fork
 //
 ssize_t sys_user_fork() {
-  sprint("User call fork.\n");
+  sprint("User call fork.");
   return do_fork( current );
 }
 
@@ -89,14 +89,15 @@ ssize_t sys_user_yield() {
   // hint: the functionality of yield is to give up the processor. therefore,
   // we should set the status of currently running process to READY, insert it in
   // the rear of ready queue, and finally, schedule a READY process to run.
-  panic( "You need to implement the yield syscall in lab3_2.\n" );
+  insert_to_ready_queue(current);
+  schedule();
 
   return 0;
 }
 ssize_t sys_user_printpa(uint64 va)
 {
   uint64 pa = (uint64)user_va_to_pa((pagetable_t)(current->pagetable), (void*)va);
-  sprint("%lx\n", pa);
+  sprint("%lx", pa);
   return 0;
 }
 

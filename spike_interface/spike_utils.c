@@ -82,7 +82,7 @@ void sprint(const char* s, ...) {
 //===============    Spike-assisted termination, panic and assert    ===============
 void poweroff(uint16_t code) {
   assert(htif);
-  sprint("Power off\r\n");
+  sprint("Power off\r");
   if (htif) {
     htif_poweroff();
   } else {
@@ -95,7 +95,7 @@ void poweroff(uint16_t code) {
 }
 
 void shutdown(int code) {
-  sprint("System is shutting down with exit code %d.\n", code);
+  sprint("System is shutting down with exit code %d.", code);
   frontend_syscall(HTIFSYS_exit, code, 0, 0, 0, 0, 0, 0);
   while (1)
     ;
@@ -114,6 +114,6 @@ void do_panic(const char* s, ...) {
 void kassert_fail(const char* s) {
   register uintptr_t ra asm("ra");
   do_panic("assertion failed @ %p: %s\n", ra, s);
-  //    sprint("assertion failed @ %p: %s\n", ra, s);
+  //    sprint("assertion failed @ %p: %s", ra, s);
   shutdown(-1);
 }
