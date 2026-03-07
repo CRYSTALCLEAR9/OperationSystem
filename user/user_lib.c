@@ -162,6 +162,13 @@ int unlink_u(const char *fn){
 }
 
 //
+// lib call to exec
+//
+int exec(const char *pathname) {
+  return do_user_call(SYS_user_exec, (uint64)pathname, 0, 0, 0, 0, 0, 0);
+}
+
+//
 // lib call to close
 //
 int close(int fd) {

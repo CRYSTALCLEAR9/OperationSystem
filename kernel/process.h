@@ -106,6 +106,8 @@ process* alloc_process();
 int free_process( process* proc );
 // fork a child from parent
 int do_fork(process* parent);
+// replace current process image with a new ELF file
+int do_exec(process* proc, const char* path);
 
 // current running process
 extern process* current;

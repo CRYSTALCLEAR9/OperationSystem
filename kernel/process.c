@@ -16,6 +16,7 @@
 #include "pmm.h"
 #include "memlayout.h"
 #include "sched.h"
+#include "elf.h"
 #include "spike_interface/spike_utils.h"
 
 //Two functions defined in kernel/usertrap.S
@@ -260,4 +261,68 @@ int do_fork( process* parent)
   insert_to_ready_queue( child );
 
   return child->pid;
+}
+
+int do_exec(process* proc, const char* path) {
+  pagetable_t new_pagetable = (pagetable_t)alloc_page();
+  mapped_region* new_mapped_info = (mapped_region*)alloc_page();
+  void* new_user_stack = alloc_page();
+
+  if (new_pagetable == 0 || new_mapped_info == 0 || new_user_stack == 0) {
+    if (new_pagetable) free_page((void*)new_pagetable);
+    if (new_mapped_info) free_page((void*)new_mapped_info);
+    if (new_user_stack) free_page(new_user_stack);
+    return -1;
+  }
+
+  memset((void*)new_pagetable, 0, PGSIZE);
+  memset((void*)new_mapped_info, 0, PGSIZE);
+
+  // Build a temporary process image first; switch over only when ELF loading succeeds.
+  process tproc = *proc;
+  tproc.pagetable = new_pagetable;
+  tproc.mapped_info = new_mapped_info;
+  tproc.total_mapped_region = 4;
+
+  tproc.user_heap.heap_top = USER_FREE_ADDRESS_START;
+  tproc.user_heap.heap_bottom = USER_FREE_ADDRESS_START;
+  tproc.user_heap.free_pages_count = 0;
+
+  tproc.trapframe->regs.sp = USER_STACK_TOP;
+
+  user_vm_map((pagetable_t)tproc.pagetable, USER_STACK_TOP - PGSIZE, PGSIZE,
+              (uint64)new_user_stack, prot_to_type(PROT_WRITE | PROT_READ, 1));
+  tproc.mapped_info[STACK_SEGMENT].va = USER_STACK_TOP - PGSIZE;
+  tproc.mapped_info[STACK_SEGMENT].npages = 1;
+  tproc.mapped_info[STACK_SEGMENT].seg_type = STACK_SEGMENT;
+
+  user_vm_map((pagetable_t)tproc.pagetable, (uint64)tproc.trapframe, PGSIZE,
+              (uint64)tproc.trapframe, prot_to_type(PROT_WRITE | PROT_READ, 0));
+  tproc.mapped_info[CONTEXT_SEGMENT].va = (uint64)tproc.trapframe;
+  tproc.mapped_info[CONTEXT_SEGMENT].npages = 1;
+  tproc.mapped_info[CONTEXT_SEGMENT].seg_type = CONTEXT_SEGMENT;
+
+  user_vm_map((pagetable_t)tproc.pagetable, (uint64)trap_sec_start, PGSIZE,
+              (uint64)trap_sec_start, prot_to_type(PROT_READ | PROT_EXEC, 0));
+  tproc.mapped_info[SYSTEM_SEGMENT].va = (uint64)trap_sec_start;
+  tproc.mapped_info[SYSTEM_SEGMENT].npages = 1;
+  tproc.mapped_info[SYSTEM_SEGMENT].seg_type = SYSTEM_SEGMENT;
+
+  tproc.mapped_info[HEAP_SEGMENT].va = USER_FREE_ADDRESS_START;
+  tproc.mapped_info[HEAP_SEGMENT].npages = 0;
+  tproc.mapped_info[HEAP_SEGMENT].seg_type = HEAP_SEGMENT;
+
+  if (load_bincode_from_host_elf_byname(&tproc, path) != 0) {
+    free_page((void*)new_pagetable);
+    free_page((void*)new_mapped_info);
+    free_page(new_user_stack);
+    return -1;
+  }
+
+  proc->pagetable = tproc.pagetable;
+  proc->mapped_info = tproc.mapped_info;
+  proc->total_mapped_region = tproc.total_mapped_region;
+  proc->user_heap = tproc.user_heap;
+
+  return 0;
 }

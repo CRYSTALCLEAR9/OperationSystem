@@ -15,6 +15,20 @@ typedef struct elf_info_t {
   process *p;
 } elf_info;
 
+// In this lab workspace, user binaries are built under ./hostfs_root and exposed as / in VFS.
+static const char *resolve_host_elf_path(const char *path, char *host_path, size_t host_path_size) {
+  if (path == 0 || path[0] != '/') return path;
+
+  const char *prefix = "./hostfs_root";
+  size_t prefix_len = strlen(prefix);
+  size_t path_len = strlen(path);
+  if (prefix_len + path_len + 1 > host_path_size) return path;
+
+  strcpy(host_path, prefix);
+  strcpy(host_path + prefix_len, path);
+  return host_path;
+}
+
 //
 // the implementation of allocater. allocates memory space for later segment loading.
 // this allocater is heavily modified @lab2_1, where we do NOT work in bare mode.
@@ -80,7 +94,7 @@ elf_status elf_load(elf_ctx *ctx) {
     void *dest = elf_alloc_mb(ctx, ph_addr.vaddr, ph_addr.vaddr, ph_addr.memsz);
 
     // actual loading
-    if (elf_fpread(ctx, dest, ph_addr.memsz, ph_addr.off) != ph_addr.memsz)
+    if (elf_fpread(ctx, dest, ph_addr.filesz, ph_addr.off) != ph_addr.filesz)
       return EL_EIO;
 
     // record the vm region in proc->mapped_info. added @lab3_1
@@ -136,6 +150,35 @@ static size_t parse_args(arg_buf *arg_bug_msg) {
 //
 // load the elf of user application, by using the spike file interface.
 //
+int load_bincode_from_host_elf_byname(process *p, const char *path) {
+  sprint("Application: %s\n", path);
+
+  elf_ctx elfloader;
+  elf_info info;
+  char host_path[256];
+  const char *open_path = resolve_host_elf_path(path, host_path, sizeof(host_path));
+
+  info.f = spike_file_open(open_path, O_RDONLY, 0);
+  info.p = p;
+  if (IS_ERR_VALUE(info.f)) return -1;
+
+  if (elf_init(&elfloader, &info) != EL_OK) {
+    spike_file_close(info.f);
+    return -1;
+  }
+
+  if (elf_load(&elfloader) != EL_OK) {
+    spike_file_close(info.f);
+    return -1;
+  }
+
+  p->trapframe->epc = elfloader.ehdr.entry;
+  spike_file_close(info.f);
+
+  sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+  return 0;
+}
+
 void load_bincode_from_host_elf(process *p) {
   arg_buf arg_bug_msg;
 
@@ -149,8 +192,10 @@ void load_bincode_from_host_elf(process *p) {
   elf_ctx elfloader;
   // elf_info is defined above, used to tie the elf file and its corresponding process.
   elf_info info;
+  char host_path[256];
+  const char *open_path = resolve_host_elf_path(arg_bug_msg.argv[0], host_path, sizeof(host_path));
 
-  info.f = spike_file_open(arg_bug_msg.argv[0], O_RDONLY, 0);
+  info.f = spike_file_open(open_path, O_RDONLY, 0);
   info.p = p;
   // IS_ERR_VALUE is a macro defined in spike_interface/spike_htif.h
   if (IS_ERR_VALUE(info.f)) panic("Fail on openning the input application program.\n");
@@ -166,7 +211,7 @@ void load_bincode_from_host_elf(process *p) {
   p->trapframe->epc = elfloader.ehdr.entry;
 
   // close the host spike file
-  spike_file_close( info.f );
+  spike_file_close(info.f);
 
   sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
 }
