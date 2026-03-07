@@ -12,7 +12,7 @@ process* ready_queue_head = NULL;
 //
 void insert_to_ready_queue( process* proc ) {
   if (proc->pid != 0) {
-    sprint( "going to insert process %d to ready queue.", proc->pid );
+    sprint( "going to insert process %d to ready queue.\n", proc->pid );
   }
   // if the queue is empty in the beginning
   if( ready_queue_head == NULL ){
@@ -58,7 +58,7 @@ void schedule() {
       }
 
     if( should_shutdown ){
-      sprint( "no more ready processes, system shutdown now." );
+      sprint( "no more ready processes, system shutdown now.\n" );
       shutdown( 0 );
     }else{
       panic( "Not handled: we should let system wait for unfinished processes.\n" );
@@ -71,7 +71,7 @@ void schedule() {
 
   current->status = RUNNING;
   if (current->pid != 0) {
-    sprint( "going to schedule process %d to run.", current->pid );
+    sprint( "going to schedule process %d to run.\n", current->pid );
   }
   switch_to( current );
 }

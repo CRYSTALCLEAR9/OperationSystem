@@ -95,7 +95,7 @@ void poweroff(uint16_t code) {
 }
 
 void shutdown(int code) {
-  sprint("System is shutting down with exit code %d.", code);
+  sprint("System is shutting down with exit code %d.\n", code);
   frontend_syscall(HTIFSYS_exit, code, 0, 0, 0, 0, 0, 0);
   while (1)
     ;
