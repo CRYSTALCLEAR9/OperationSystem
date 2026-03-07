@@ -8,7 +8,7 @@
 #include "util/types.h"
 
 int main(int argc, char *argv[]) {
-  printu("\n======== Shell Start ========\n\n");
+  printu("======== Shell Start ========\n\n");
   int fd;
   int MAXBUF = 1024;
   char buf[MAXBUF];

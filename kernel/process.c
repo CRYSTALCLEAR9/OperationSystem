@@ -15,6 +15,7 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "memlayout.h"
+#include "util/functions.h"
 #include "sched.h"
 #include "spike_interface/spike_utils.h"
 
@@ -136,8 +137,10 @@ process* alloc_process() {
   procs[i].mapped_info[SYSTEM_SEGMENT].npages = 1;
   procs[i].mapped_info[SYSTEM_SEGMENT].seg_type = SYSTEM_SEGMENT;
 
-  sprint("in alloc_proc. user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
-    procs[i].trapframe, procs[i].trapframe->regs.sp, procs[i].kstack);
+  if (current != NULL) {
+    sprint("in alloc_proc. user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
+      procs[i].trapframe, procs[i].trapframe->regs.sp, procs[i].kstack);
+  }
 
   // initialize the process's heap manager
   procs[i].user_heap.heap_top = USER_FREE_ADDRESS_START;
@@ -153,7 +156,9 @@ process* alloc_process() {
 
   // initialize files_struct
   procs[i].pfiles = init_proc_file_management();
-  sprint("in alloc_proc. build proc_file_management successfully.\n");
+  if (current != NULL) {
+    sprint("in alloc_proc. build proc_file_management successfully.\n");
+  }
 
   // return after initialization.
   return &procs[i];
@@ -241,7 +246,7 @@ int do_fork( process* parent)
         user_vm_map((pagetable_t)child->pagetable,parent->mapped_info[i].va,PGSIZE * parent->mapped_info[i].npages,
                         lookup_pa(parent->pagetable,parent->mapped_info[i].va),
                         prot_to_type(PROT_READ | PROT_EXEC,1));
-        sprint("do_fork map code segment at pa:%p of parent to child at va:%p.\n", lookup_pa(parent->pagetable,parent->mapped_info[i].va),
+        sprint("do_fork map code segment at pa:%lx of parent to child at va:%lx.\n", lookup_pa(parent->pagetable,parent->mapped_info[i].va),
                parent->mapped_info[i].va);
 
         // after mapping, register the vm region (do not delete codes below!)
@@ -260,4 +265,103 @@ int do_fork( process* parent)
   insert_to_ready_queue( child );
 
   return child->pid;
+}
+
+// replace current process image with a new executable image and a single argument.
+int do_exec(process* proc, const char* path, const char* arg) {
+  if (!proc || !path) return -1;
+
+  // remove user mappings built by previous image and reset mapping records after
+  // the fixed regions (stack/context/system/heap).
+  for (int i = 0; i < proc->total_mapped_region; i++) {
+    if (proc->mapped_info[i].npages == 0) continue;
+    switch (proc->mapped_info[i].seg_type) {
+      case DATA_SEGMENT:
+        user_vm_unmap((pagetable_t)proc->pagetable, proc->mapped_info[i].va,
+                      proc->mapped_info[i].npages * PGSIZE, 1);
+        break;
+      case CODE_SEGMENT:
+        // code pages may be shared after fork, so only unmap here.
+        user_vm_unmap((pagetable_t)proc->pagetable, proc->mapped_info[i].va,
+                      proc->mapped_info[i].npages * PGSIZE, 0);
+        break;
+      case HEAP_SEGMENT:
+        if (proc->mapped_info[i].npages > 0) {
+          user_vm_unmap((pagetable_t)proc->pagetable, proc->mapped_info[i].va,
+                        proc->mapped_info[i].npages * PGSIZE, 1);
+        }
+        break;
+      default:
+        break;
+    }
+    if (proc->mapped_info[i].seg_type >= CODE_SEGMENT) {
+      proc->mapped_info[i].va = 0;
+      proc->mapped_info[i].npages = 0;
+      proc->mapped_info[i].seg_type = 0;
+    }
+  }
+
+  proc->total_mapped_region = 4;
+  proc->user_heap.heap_top = USER_FREE_ADDRESS_START;
+  proc->user_heap.heap_bottom = USER_FREE_ADDRESS_START;
+  proc->user_heap.free_pages_count = 0;
+  proc->mapped_info[HEAP_SEGMENT].va = USER_FREE_ADDRESS_START;
+  proc->mapped_info[HEAP_SEGMENT].npages = 0;
+  proc->mapped_info[HEAP_SEGMENT].seg_type = HEAP_SEGMENT;
+
+  // clear current stack content before setting up new argv.
+  memset((void*)lookup_pa(proc->pagetable, USER_STACK_TOP - PGSIZE), 0, PGSIZE);
+
+  load_bincode_from_host_elf(proc, (char*)path);
+
+  if (!arg) arg = "";
+
+  uint64 sp = USER_STACK_TOP;
+  size_t arg_len = strlen(arg) + 1;
+  if (arg_len > PGSIZE / 2) return -1;
+
+  sp -= arg_len;
+  char* arg_user = (char*)sp;
+  char* arg_pa = (char*)user_va_to_pa((pagetable_t)proc->pagetable, arg_user);
+  if (!arg_pa) return -1;
+  memcpy(arg_pa, arg, arg_len);
+
+  sp = ROUNDDOWN(sp, 16);
+  sp -= 2 * sizeof(uint64);
+  uint64* argv_pa = (uint64*)user_va_to_pa((pagetable_t)proc->pagetable, (void*)sp);
+  if (!argv_pa) return -1;
+  argv_pa[0] = (uint64)arg_user;
+  argv_pa[1] = 0;
+
+  proc->trapframe->regs.sp = sp;
+  proc->trapframe->regs.a0 = 1;     // argc
+  proc->trapframe->regs.a1 = sp;    // argv
+
+  return 0;
+}
+
+// wait for a child to become zombie and reap it.
+int do_wait(process* proc, int pid) {
+  if (!proc) return -1;
+
+  for (;;) {
+    int has_child = 0;
+    for (int i = 0; i < NPROC; i++) {
+      if (procs[i].parent != proc) continue;
+      if (pid != -1 && procs[i].pid != pid) continue;
+
+      has_child = 1;
+      if (procs[i].status == ZOMBIE) {
+        procs[i].status = FREE;
+        procs[i].parent = NULL;
+        procs[i].queue_next = NULL;
+        return procs[i].pid;
+      }
+    }
+
+    if (!has_child) return -1;
+
+    proc->status = BLOCKED;
+    schedule();
+  }
 }

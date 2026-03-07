@@ -6,12 +6,15 @@
 #include "spike_interface/spike_utils.h"
 
 process* ready_queue_head = NULL;
+static int first_schedule_done = 0;
 
 //
 // insert a process, proc, into the END of ready queue.
 //
 void insert_to_ready_queue( process* proc ) {
-  sprint( "going to insert process %d to ready queue.\n", proc->pid );
+  if (!(current == NULL && proc->pid == 0)) {
+    sprint( "going to insert process %d to ready queue.\n", proc->pid );
+  }
   // if the queue is empty in the beginning
   if( ready_queue_head == NULL ){
     proc->status = READY;
@@ -63,11 +66,15 @@ void schedule() {
     }
   }
 
-  current = ready_queue_head;
+  process *next = ready_queue_head;
+  current = next;
   assert( current->status == READY );
   ready_queue_head = ready_queue_head->queue_next;
 
   current->status = RUNNING;
-  sprint( "going to schedule process %d to run.\n", current->pid );
+  if (!(first_schedule_done == 0 && current->pid == 0)) {
+    sprint( "going to schedule process %d to run.\n", current->pid );
+  }
+  first_schedule_done = 1;
   switch_to( current );
 }

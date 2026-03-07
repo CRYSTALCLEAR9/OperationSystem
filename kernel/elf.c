@@ -90,17 +90,23 @@ elf_status elf_load(elf_ctx *ctx) {
     ((process*)(((elf_info*)(ctx->info))->p))->mapped_info[j].va = ph_addr.vaddr;
     ((process*)(((elf_info*)(ctx->info))->p))->mapped_info[j].npages = 1;
 
+    process *proc = (process*)(((elf_info*)(ctx->info))->p);
+
     // SEGMENT_READABLE, SEGMENT_EXECUTABLE, SEGMENT_WRITABLE are defined in kernel/elf.h
     if( ph_addr.flags == (SEGMENT_READABLE|SEGMENT_EXECUTABLE) ){
-      ((process*)(((elf_info*)(ctx->info))->p))->mapped_info[j].seg_type = CODE_SEGMENT;
-      sprint( "CODE_SEGMENT added at mapped info offset:%d\n", j );
+      proc->mapped_info[j].seg_type = CODE_SEGMENT;
+      if (proc->pid != 0) {
+        sprint( "CODE_SEGMENT added at mapped info offset:%d\n", j );
+      }
     }else if ( ph_addr.flags == (SEGMENT_READABLE|SEGMENT_WRITABLE) ){
-      ((process*)(((elf_info*)(ctx->info))->p))->mapped_info[j].seg_type = DATA_SEGMENT;
-      sprint( "DATA_SEGMENT added at mapped info offset:%d\n", j );
+      proc->mapped_info[j].seg_type = DATA_SEGMENT;
+      if (proc->pid != 0) {
+        sprint( "DATA_SEGMENT added at mapped info offset:%d\n", j );
+      }
     }else
       panic( "unknown program segment encountered, segment flag:%d.\n", ph_addr.flags );
 
-    ((process*)(((elf_info*)(ctx->info))->p))->total_mapped_region ++;
+    proc->total_mapped_region ++;
   }
 
   return EL_OK;
@@ -110,7 +116,9 @@ elf_status elf_load(elf_ctx *ctx) {
 // load the elf of user application, by using the spike file interface.
 //
 void load_bincode_from_host_elf(process *p, char *filename) {
-  sprint("Application: %s\n", filename);
+  if (p->pid != 0) {
+    sprint("Application: %s\n", filename);
+  }
 
   //elf loading. elf_ctx is defined in kernel/elf.h, used to track the loading process.
   elf_ctx elfloader;
@@ -135,5 +143,7 @@ void load_bincode_from_host_elf(process *p, char *filename) {
   // close the vfs file
   vfs_close( info.f );
 
-  sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+  if (p->pid != 0) {
+    sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+  }
 }
