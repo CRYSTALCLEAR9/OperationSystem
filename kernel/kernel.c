@@ -15,6 +15,21 @@
 #include "vfs.h"
 #include "rfs.h"
 #include "ramdev.h"
+#include "sync_utils.h"
+
+volatile int g_multicore_boot_mode = 0;
+volatile int g_boot_app_count = 0;
+static volatile int g_smode_init_ready = 0;
+
+static int boot_participating_harts(void) {
+  return g_boot_app_count < g_active_harts ? g_boot_app_count : g_active_harts;
+}
+
+static void idle_hart_forever(void) {
+  intr_off();
+  write_csr(sie, 0);
+  while (1) asm volatile("wfi");
+}
 
 //
 // trap_sec_start points to the beginning of S-mode trap segment (i.e., the entry point of
@@ -67,6 +82,7 @@ process* load_user_program() {
   process* proc;
 
   proc = alloc_process();
+  sprint("User application is loading.\n");
 
   arg_buf arg_bug_msg;
 
@@ -78,35 +94,74 @@ process* load_user_program() {
   return proc;
 }
 
+static void load_user_program_for_hart(process *proc, int app_index) {
+  arg_buf arg_bug_msg;
+  size_t argc = parse_args(&arg_bug_msg);
+  if (!argc || app_index >= (int)argc) panic("Missing application for hart %d.\n", app_index);
+
+  sprint("hartid = %ld: User application is loading.\n", read_tp());
+  load_bincode_from_host_elf(proc, arg_bug_msg.argv[app_index]);
+}
+
 //
 // s_start: S-mode entry point of riscv-pke OS kernel.
 //
 int s_start(void) {
+  uint64 hartid = read_tp();
+  arg_buf arg_bug_msg;
+  size_t argc = parse_args(&arg_bug_msg);
+  if (!argc) panic("You need to specify the application program!\n");
+  if (hartid == 0) {
+    g_boot_app_count = argc;
+    g_multicore_boot_mode = (g_active_harts > 1 && argc > 1) ? 1 : 0;
+  }
+
   // in the beginning, we use Bare mode (direct) memory mapping as in lab1.
   // but now, we are going to switch to the paging mode @lab2_1.
   // note, the code still works in Bare mode when calling pmm_init() and kern_vm_init().
   write_csr(satp, 0);
 
-  // init phisical memory manager
-  pmm_init();
+  while (g_boot_app_count == 0)
+    ;
 
-  // build the kernel page table
-  kern_vm_init();
+  if (g_multicore_boot_mode)
+    sprint("hartid = %ld: Enter supervisor mode...\n", hartid);
+  else if (hartid == 0)
+    sprint("Enter supervisor mode...\n");
+
+  if (hartid == 0) {
+    pmm_init();
+    kern_vm_init();
+    init_proc_pool();
+    fs_init();
+  }
+  sync_barrier(&g_smode_init_ready, g_active_harts);
+
+  if (!g_multicore_boot_mode && hartid != 0) idle_hart_forever();
 
   // now, switch to paging mode by turning on paging (SV39)
   enable_paging();
   // the code now formally works in paging mode, meaning the page table is now in use.
+  if (!g_multicore_boot_mode || hartid == 0) sprint("kernel page table is on \n");
 
-  // added @lab3_1
-  init_proc_pool();
-
-  // init file system, added @lab4_1
-  fs_init();
-
-  // the application code (elf) is first loaded into memory, and then put into execution
-  // added @lab3_1
-  insert_to_ready_queue( load_user_program() );
-  schedule();
+  if (g_multicore_boot_mode) {
+    if ((int)hartid < boot_participating_harts()) {
+      process *proc = alloc_process();
+      sprint("hartid = %ld: user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
+             hartid, proc->trapframe, proc->trapframe->regs.sp, proc->kstack);
+      load_user_program_for_hart(proc, hartid);
+      sprint("hartid = %ld: Switch to user mode...\n", hartid);
+      vm_alloc_stage[hartid] = 1;
+      switch_to(proc);
+    }
+    idle_hart_forever();
+  } else {
+    process *proc = load_user_program();
+    sprint("Switch to user mode...\n");
+    vm_alloc_stage[hartid] = 1;
+    insert_to_ready_queue(proc);
+    schedule();
+  }
 
   // we should never reach here.
   return 0;

@@ -17,6 +17,8 @@ typedef struct trapframe_t {
 
   // kernel page table. added @lab2_1
   /* offset:272 */ uint64 kernel_satp;
+  // hart id used by the kernel after trapping from user mode
+  /* offset:280 */ uint64 kernel_hartid;
 }trapframe;
 
 // riscv-pke kernel supports at most 32 processes
@@ -62,6 +64,15 @@ typedef struct process_heap_manager {
   uint32 free_pages_count;
 }process_heap_manager;
 
+#define HEAP_MAX_BLOCKS 256
+
+typedef struct heap_block_t {
+  uint64 va;
+  uint64 size;
+  int used;
+  int valid;
+} heap_block;
+
 // the extremely simple definition of process, used for begining labs of PKE
 typedef struct process_t {
   // pointing to the stack used in trap handling.
@@ -78,6 +89,7 @@ typedef struct process_t {
 
   // heap management
   process_heap_manager user_heap;
+  heap_block heap_blocks[HEAP_MAX_BLOCKS];
 
   // process id
   uint64 pid;
@@ -93,6 +105,11 @@ typedef struct process_t {
 
   // file system. added @lab4_1
   proc_file_management *pfiles;
+  int stdin_fd;
+  int stdout_fd;
+
+  // current working directory
+  char cwd[MAX_PATH_LEN];
 }process;
 
 // switch to run user app
@@ -110,8 +127,13 @@ int do_fork(process* parent);
 int do_exec(process* proc, const char* path, const char* arg);
 // wait for a child process to exit
 int do_wait(process* proc, int pid);
+// compact heap helpers
+void process_heap_init(process *proc);
+uint64 process_heap_alloc(process *proc, uint64 size);
+int process_heap_free(process *proc, uint64 va);
 
-// current running process
-extern process* current;
+// current running process(es)
+extern process* g_current[NCPU];
+#define current (g_current[read_tp()])
 
 #endif

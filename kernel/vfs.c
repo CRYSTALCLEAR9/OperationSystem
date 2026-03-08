@@ -721,3 +721,36 @@ struct vinode *default_alloc_vinode(struct super_block *sb) {
 }
 
 struct file_system_type *fs_list[MAX_SUPPORTED_FS];
+
+void make_abs_path(const char *cwd, const char *path, char *abs_path) {
+  char temp[MAX_PATH_LEN];
+  char *stack[MAX_PATH_LEN];
+  int top = 0;
+
+  if (path[0] == '/') {
+    safestrcpy(temp, path, sizeof(temp));
+  } else {
+    safestrcpy(temp, cwd, sizeof(temp));
+    if (strlen(temp) > 0 && temp[strlen(temp) - 1] != '/' && strlen(temp) + 1 < sizeof(temp))
+      strcat(temp, "/");
+    if (strlen(temp) + strlen(path) < sizeof(temp))
+      strcat(temp, path);
+  }
+
+  char *token = strtok(temp, "/");
+  while (token != NULL) {
+    if (strcmp(token, ".") == 0) {
+    } else if (strcmp(token, "..") == 0) {
+      if (top > 0) top--;
+    } else {
+      stack[top++] = token;
+    }
+    token = strtok(NULL, "/");
+  }
+
+  safestrcpy(abs_path, "/", MAX_PATH_LEN);
+  for (int i = 0; i < top; i++) {
+    if (i > 0) strcat(abs_path, "/");
+    strcat(abs_path, stack[i]);
+  }
+}

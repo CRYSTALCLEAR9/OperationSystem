@@ -10,6 +10,46 @@
 #include "util/types.h"
 #include "vfs.h"
 
+#define HOSTFS_MAX_DIRENTS 64
+
+typedef struct hostfs_dir_state_t {
+  int entry_count;
+  struct dir entries[HOSTFS_MAX_DIRENTS];
+} hostfs_dir_state;
+
+static int hostfs_fill_dir_state(struct dentry *dentry, hostfs_dir_state *state) {
+  char dir_path[MAX_PATH_LEN];
+  char index_path[MAX_PATH_LEN];
+  char buf[2048];
+  state->entry_count = 0;
+
+  get_path_string(dir_path, dentry);
+  safestrcpy(index_path, dir_path, sizeof(index_path));
+  if (strcmp(dir_path, H_ROOT_DIR) == 0)
+    strcat(index_path, "/.dirindex");
+  else
+    strcat(index_path, "/.dirindex");
+
+  spike_file_t *index = spike_file_open(index_path, O_RDONLY, 0);
+  if ((int64)index < 0) return 0;
+
+  int nread = spike_file_read(index, buf, sizeof(buf) - 1);
+  spike_file_close(index);
+  if (nread <= 0) return 0;
+  buf[nread] = '\0';
+
+  char *line = strtok(buf, "\n");
+  while (line && state->entry_count < HOSTFS_MAX_DIRENTS) {
+    if (line[0] != '\0') {
+      safestrcpy(state->entries[state->entry_count].name, line, MAX_FILE_NAME_LEN);
+      state->entries[state->entry_count].inum = state->entry_count + 1;
+      state->entry_count++;
+    }
+    line = strtok(NULL, "\n");
+  }
+  return 0;
+}
+
 /**** host-fs vinode interface ****/
 const struct vinode_ops hostfs_i_ops = {
     .viop_read = hostfs_read,
@@ -20,6 +60,8 @@ const struct vinode_ops hostfs_i_ops = {
 
     .viop_hook_open = hostfs_hook_open,
     .viop_hook_close = hostfs_hook_close,
+    .viop_hook_opendir = hostfs_hook_opendir,
+    .viop_hook_closedir = hostfs_hook_closedir,
 
     .viop_write_back_vinode = hostfs_write_back_vinode,
 
@@ -186,11 +228,15 @@ struct vinode *hostfs_lookup(struct vinode *parent, struct dentry *sub_dentry) {
   char path[MAX_PATH_LEN];
   get_path_string(path, sub_dentry);
 
-  spike_file_t *f = spike_file_open(path, O_RDWR, 0);
+  spike_file_t *f = spike_file_open(path, O_RDONLY, 0);
 
   struct vinode *child_inode = hostfs_alloc_vinode(parent->sb);
   child_inode->i_fs_info = f;
   hostfs_update_vinode(child_inode);
+  if (child_inode->type == H_DIR && (int64)f >= 0) {
+    spike_file_close(f);
+    child_inode->i_fs_info = NULL;
+  }
 
   child_inode->ref = 0;
   return child_inode;
@@ -247,8 +293,13 @@ int hostfs_unlink(struct vinode *parent, struct dentry *sub_dentry, struct vinod
 }
 
 int hostfs_readdir(struct vinode *dir_vinode, struct dir *dir, int *offset) {
-  panic("hostfs_readdir not implemented!\n");
-  return -1;
+  hostfs_dir_state *state = (hostfs_dir_state *)dir_vinode->i_fs_info;
+  if (state == 0) return -1;
+  if (*offset < 0 || *offset >= state->entry_count) return -1;
+
+  *dir = state->entries[*offset];
+  (*offset)++;
+  return 0;
 }
 
 struct vinode *hostfs_mkdir(struct vinode *parent, struct dentry *sub_dentry) {
@@ -281,6 +332,23 @@ int hostfs_hook_open(struct vinode *f_inode, struct dentry *f_dentry) {
 int hostfs_hook_close(struct vinode *f_inode, struct dentry *dentry) {
   spike_file_t *f = (spike_file_t *)f_inode->i_fs_info;
   spike_file_close(f);
+  return 0;
+}
+
+int hostfs_hook_opendir(struct vinode *dir_inode, struct dentry *dentry) {
+  hostfs_dir_state *state = (hostfs_dir_state *)alloc_page();
+  state->entry_count = 0;
+  hostfs_fill_dir_state(dentry, state);
+  dir_inode->i_fs_info = state;
+  return 0;
+}
+
+int hostfs_hook_closedir(struct vinode *dir_inode, struct dentry *dentry) {
+  hostfs_dir_state *state = (hostfs_dir_state *)dir_inode->i_fs_info;
+  if (state) {
+    free_page(state);
+    dir_inode->i_fs_info = 0;
+  }
   return 0;
 }
 

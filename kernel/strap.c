@@ -6,10 +6,13 @@
 #include "process.h"
 #include "strap.h"
 #include "syscall.h"
+#include "elf.h"
 #include "pmm.h"
 #include "vmm.h"
 #include "sched.h"
 #include "util/functions.h"
+#include "memlayout.h"
+#include "string.h"
 
 #include "spike_interface/spike_utils.h"
 
@@ -52,15 +55,47 @@ void handle_mtimer_trap() {
 // stval: the virtual address that causes pagefault when being accessed.
 //
 void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
-  sprint("handle_page_fault: %lx\n", stval);
   switch (mcause) {
     case CAUSE_STORE_PAGE_FAULT:
-      // TODO (lab2_3): implement the operations that solve the page fault to
-      // dynamically increase application stack.
-      // hint: first allocate a new physical page, and then, maps the new page to the
-      // virtual address that causes the page fault.
-        map_pages(current->pagetable,ROUNDDOWN(stval,PGSIZE),PGSIZE,(uint64)alloc_page(),prot_to_type(PROT_READ|PROT_WRITE,1));
+    case CAUSE_LOAD_PAGE_FAULT: {
+      uint64 va = ROUNDDOWN(stval, PGSIZE);
+      pte_t *pte = page_walk(current->pagetable, va, 0);
+      if (pte && (*pte & PTE_V) && (*pte & PTE_COW)) {
+        if (stval >= current->user_heap.heap_bottom && stval < current->user_heap.heap_top)
+          sprint("handle_page_fault: %lx\n", stval);
+        uint64 old_pa = PTE2PA(*pte);
+        void *new_pa = alloc_page();
+        if (new_pa == 0) panic("COW fault: out of memory\n");
+
+        memcpy(new_pa, (void *)old_pa, PGSIZE);
+        uint64 new_flags = PTE_FLAGS(*pte);
+        new_flags = (new_flags | PTE_W | PTE_D) & (~PTE_COW);
+        *pte = PA2PTE((uint64)new_pa) | new_flags;
+        free_page((void *)old_pa);
+        flush_tlb();
+        break;
+      }
+
+      if (stval >= current->trapframe->regs.sp && stval < USER_STACK_TOP) {
+        sprint("handle_page_fault: %lx\n", stval);
+        mapped_region *stack = &current->mapped_info[STACK_SEGMENT];
+        uint64 old_base = stack->va;
+        for (uint64 page_va = va; page_va < old_base; page_va += PGSIZE) {
+          if (lookup_pa(current->pagetable, page_va) != 0) continue;
+          map_pages(current->pagetable, page_va, PGSIZE, (uint64)alloc_page(),
+                    prot_to_type(PROT_READ | PROT_WRITE, 1));
+        }
+        if (va < old_base) {
+          stack->npages += (old_base - va) / PGSIZE;
+          stack->va = va;
+        }
+      } else {
+        sprint("handle_page_fault: %lx\n", stval);
+        sprint("this address is not available!\n");
+        shutdown(-1);
+      }
       break;
+    }
     default:
       sprint("unknown page fault.\n");
       break;
@@ -118,6 +153,7 @@ void smode_trap_handler(void) {
       handle_user_page_fault(cause, read_csr(sepc), read_csr(stval));
       break;
     default:
+      print_runtime_error(current->trapframe->epc);
       sprint("smode_trap_handler(): unexpected scause %p\n", read_csr(scause));
       sprint("            sepc=%p stval=%p\n", read_csr(sepc), read_csr(stval));
       panic( "unexpected exception happened.\n" );

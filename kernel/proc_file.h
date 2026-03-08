@@ -34,7 +34,8 @@ typedef struct proc_file_management_t {
 } proc_file_management;
 
 proc_file_management *init_proc_file_management(void);
-
+int do_pipe(int *fds);
+void copy_proc_file_management(proc_file_management *dst, proc_file_management *src);
 void reclaim_proc_file_management(proc_file_management *pfiles);
 
 #endif

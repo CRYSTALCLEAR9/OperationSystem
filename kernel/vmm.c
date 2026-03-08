@@ -48,7 +48,7 @@ uint64 prot_to_type(int prot, int user) {
 // returns: PTE (page table entry) pointing to va.
 //
 pte_t *page_walk(pagetable_t page_dir, uint64 va, int alloc) {
-  if (va >= MAXVA) panic("page_walk");
+  if (va >= MAXVA) panic("page_walk: va 0x%lx", va);
 
   // starting from the page directory
   pagetable_t pt = page_dir;
@@ -68,7 +68,7 @@ pte_t *page_walk(pagetable_t page_dir, uint64 va, int alloc) {
       pt = (pagetable_t)PTE2PA(*pte);
     } else { //PTE invalid (not exist).
       // allocate a page (to be the new pagetable), if alloc == 1
-      if( alloc && ((pt = (pte_t *)alloc_page(1)) != 0) ){
+      if( alloc && ((pt = (pte_t *)alloc_page()) != 0) ){
         memset(pt, 0, PGSIZE);
         // writes the physical address of newly allocated page to pte, to establish the
         // page table tree.
@@ -155,9 +155,9 @@ void *user_va_to_pa(pagetable_t page_dir, void *va) {
   // (va & (1<<PGSHIFT -1)) means computing the offset of "va" inside its page.
   // Also, it is possible that "va" is not mapped at all. in such case, we can find
   // invalid PTE, and should return NULL.
+  if ((uint64)va >= MAXVA) return 0;
   pte_t* pte = page_walk(page_dir,(uint64)va,0);
-  if(pte == 0)
-      return 0;
+  if (pte == 0 || (*pte & PTE_V) == 0) return 0;
   uint64 pa = PTE2PA(*pte) + ((uint64)va & ((1 << PGSHIFT) -1));
   return (void*)pa;
 }
@@ -211,4 +211,3 @@ void print_proc_vmspace(process* proc) {
     sprint( ", mapped to pa:%lx\n", lookup_pa(proc->pagetable, proc->mapped_info[i].va) );
   }
 }
-

@@ -5,7 +5,10 @@
 #include "util/types.h"
 #include "kernel/riscv.h"
 #include "kernel/config.h"
+#include "kernel/sync_utils.h"
 #include "spike_interface/spike_utils.h"
+#include "spike_interface/dts_parse.h"
+#include "util/string.h"
 
 //
 // global variables are placed in the .data section.
@@ -28,7 +31,38 @@ extern uint64 htif;
 extern uint64 g_mem_size;
 // struct riscv_regs is define in kernel/riscv.h, and g_itrframe is used to save
 // registers when interrupt hapens in M mode. added @lab1_2
-riscv_regs g_itrframe;
+riscv_regs g_itrframe[NCPU];
+volatile int g_active_harts = 1;
+static volatile int g_boot_barrier = 0;
+
+struct cpu_scan {
+  int count;
+};
+
+static void cpu_prop(const struct fdt_scan_prop *prop, void *extra) {
+  (void)prop;
+  (void)extra;
+}
+
+static void cpu_open(const struct fdt_scan_node *node, void *extra) {
+  struct cpu_scan *scan = (struct cpu_scan *)extra;
+  if (node->parent && !strcmp(node->parent->name, "cpus") && !strncmp(node->name, "cpu@", 4))
+    scan->count++;
+}
+
+static int query_ncpus(uint64 fdt) {
+  struct fdt_cb cb;
+  struct cpu_scan scan;
+  memset(&cb, 0, sizeof(cb));
+  memset(&scan, 0, sizeof(scan));
+  cb.open = cpu_open;
+  cb.prop = cpu_prop;
+  cb.extra = &scan;
+  fdt_scan(fdt, &cb);
+  if (scan.count <= 0) scan.count = 1;
+  if (scan.count > NCPU) scan.count = NCPU;
+  return scan.count;
+}
 
 //
 // get the information of HTIF (calling interface) and the emulated memory by
@@ -41,9 +75,11 @@ riscv_regs g_itrframe;
 void init_dtb(uint64 dtb) {
   // defined in spike_interface/spike_htif.c, enabling Host-Target InterFace (HTIF)
   query_htif(dtb);
+  if (htif) sprint("HTIF is available!\r\n");
 
   // defined in spike_interface/spike_memory.c, obtain information about emulated memory
   query_mem(dtb);
+  sprint("(Emulated) memory size: %ld MB\n", g_mem_size >> 20);
 }
 
 //
@@ -89,16 +125,21 @@ void timerinit(uintptr_t hartid) {
 // m_start: machine mode C entry point.
 //
 void m_start(uintptr_t hartid, uintptr_t dtb) {
-  // init the spike file interface (stdin,stdout,stderr)
-  // functions with "spike_" prefix are all defined in codes under spike_interface/,
-  // sprint is also defined in spike_interface/spike_utils.c
-  spike_file_init();
-  // init HTIF (Host-Target InterFace) and memory by using the Device Table Blob (DTB)
-  // init_dtb() is defined above.
-  init_dtb(dtb);
+  write_tp(hartid);
+
+  if (hartid == 0) {
+    spike_file_init();
+    g_active_harts = query_ncpus(dtb);
+    init_dtb(dtb);
+  }
+  while (g_active_harts == 0)
+    ;
+  sync_barrier(&g_boot_barrier, g_active_harts);
+
+  sprint("In m_start, hartid:%d\n", hartid);
 
   // save the address of trap frame for interrupt in M mode to "mscratch". added @lab1_2
-  write_csr(mscratch, &g_itrframe);
+  write_csr(mscratch, &g_itrframe[hartid]);
 
   // set previous privilege mode to S (Supervisor), and will enter S mode after 'mret'
   // write_csr is a macro defined in kernel/riscv.h

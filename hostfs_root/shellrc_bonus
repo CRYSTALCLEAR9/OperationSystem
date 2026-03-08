@@ -1,0 +1,28 @@
+# hostfs ls
+/bin/app_ls /
+
+# environment variables
+setenv TARGET /RAMDISK0
+printenv TARGET
+
+# basic filesystem operations through env expansion
+/bin/app_mkdir $TARGET/bonus_dir
+/bin/app_touch $TARGET/bonus_dir/ramfile1
+/bin/app_echo $TARGET/bonus_dir/ramfile1
+/bin/app_cat $TARGET/bonus_dir/ramfile1
+
+# pipe
+/bin/app_pipe_echo hello_bonus_pipe | /bin/app_upper
+
+# background jobs
+/bin/app_bgwork alpha &
+/bin/app_bgwork beta &
+waitall
+
+# history
+history
+
+# stress tests
+/bin/app_stress_proc 4
+/bin/app_stress_io $TARGET/bonus_dir/io.txt
+END END

@@ -37,6 +37,7 @@ struct file *vfs_opendir(const char *path);
 int vfs_readdir(struct file *file, struct dir *dir);
 int vfs_mkdir(const char *path);
 int vfs_closedir(struct file *file);
+void make_abs_path(const char *cwd, const char *path, char *abs_path);
 
 /**** vfs abstract object types ****/
 // system root direntry
@@ -76,6 +77,10 @@ int hash_put_dentry(struct dentry *dentry);
 int hash_erase_dentry(struct dentry *dentry);
 
 // data structure of an openned file
+#define FILE_KIND_VFS 0
+#define FILE_KIND_PIPE_READ 1
+#define FILE_KIND_PIPE_WRITE 2
+
 struct file {
   int status;
   int readable;

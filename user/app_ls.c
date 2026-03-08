@@ -3,7 +3,7 @@
 #include "util/types.h"
 
 int main(int argc, char *argv[]) {
-  char *path = argv[0];
+  char *path = argc > 0 ? argv[0] : "/";
   int dir_fd = opendir_u(path);
   printu("---------- ls command -----------\n");
   printu("ls \"%s\":\n", path);
