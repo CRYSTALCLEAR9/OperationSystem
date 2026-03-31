@@ -11,6 +11,7 @@
 #include "util/string.h"
 #include "process.h"
 #include "elf.h"
+#include "spike_interface/spike_htif.h"
 #include "util/functions.h"
 #include "pmm.h"
 #include "vmm.h"
@@ -30,11 +31,6 @@ typedef struct semaphore_t {
 } semaphore;
 
 static semaphore sem_pool[NSEM];
-static volatile int g_multicore_exit_barrier = 0;
-
-static int boot_participating_harts(void) {
-  return g_boot_app_count < g_active_harts ? g_boot_app_count : g_active_harts;
-}
 
 static int sem_id_valid(int sem_id) {
   return sem_id >= 0 && sem_id < NSEM && sem_pool[sem_id].used;
@@ -124,7 +120,7 @@ ssize_t sys_user_print(const char* buf, size_t n) {
   char* pa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)buf);
   if (pa == 0) return -1;
   if (current->stdout_fd >= 0) return do_write(current->stdout_fd, pa, n);
-  if (g_multicore_boot_mode) {
+  if (g_multicore_boot_mode && !g_quiet_mode) {
     sprint("hartid = %ld: %s", read_tp(), pa);
     return n;
   }
@@ -133,20 +129,14 @@ ssize_t sys_user_print(const char* buf, size_t n) {
 }
 
 ssize_t sys_user_exit(uint64 code) {
-  if (g_multicore_boot_mode) {
-    uint64 hartid = read_tp();
-    sprint("hartid = %ld: User exit with code:%d.\n", hartid, code);
-    sync_barrier(&g_multicore_exit_barrier, boot_participating_harts());
-    if (hartid == 0) {
-      sprint("hartid = %ld: shutdown with code:%d.\n", hartid, code);
-      shutdown(code);
+  if (!g_quiet_mode || code != 0) {
+    if (g_multicore_boot_mode) {
+      uint64 hartid = read_tp();
+      sprint("hartid = %ld: User exit with code:%ld.\n", hartid, code);
+    } else {
+      sprint("User exit with code:%ld.\n", code);
     }
-    intr_off();
-    write_csr(sie, 0);
-    while (1) asm volatile("wfi");
   }
-
-  sprint("User exit with code:%d.\n", code);
   if (current->parent && current->parent->status == BLOCKED)
     insert_to_ready_queue(current->parent);
   free_process(current);
@@ -158,7 +148,7 @@ uint64 sys_user_allocate_page(uint64 size) {
   assert(current);
   if (size == 0) size = PGSIZE;
   uint64 va = process_heap_alloc(current, size);
-  if (g_multicore_boot_mode && va != 0) {
+  if (!g_quiet_mode && g_multicore_boot_mode && va != 0) {
     uint64 pa = lookup_pa((pagetable_t)current->pagetable, va);
     sprint("hartid = %ld: vaddr 0x%x is mapped to paddr 0x%x\n", read_tp(), va, pa);
   }
@@ -171,7 +161,7 @@ uint64 sys_user_free_page(uint64 va) {
 }
 
 ssize_t sys_user_fork() {
-  sprint("User call fork.\n");
+  if (!g_quiet_mode) sprint("User call fork.\n");
   return do_fork(current);
 }
 
@@ -393,8 +383,51 @@ ssize_t sys_user_set_stdout(int fd) {
   return 0;
 }
 
+ssize_t sys_user_set_affinity(int hartid) {
+  if (hartid < 0) {
+    if (g_active_harts >= 64)
+      current->hart_mask = ~0ULL;
+    else
+      current->hart_mask = (1ULL << g_active_harts) - 1;
+    return 0;
+  }
+  if (hartid >= g_active_harts) return -1;
+  current->hart_mask = (1ULL << hartid);
+  return 0;
+}
+
+ssize_t sys_user_set_quiet(int on) {
+  g_quiet_mode = on ? 1 : 0;
+  return 0;
+}
+
+static int console_getchar_blocking(void) {
+  int ch;
+  do {
+    ch = htif_console_getchar();
+  } while (ch < 0);
+  return ch;
+}
+
 ssize_t sys_user_read_stdin(char *bufva, uint64 count) {
-  if (current->stdin_fd < 0) return 0;
+  if (count == 0) return 0;
+
+  if (current->stdin_fd < 0) {
+    uint64 i = 0;
+    while (i < count) {
+      uint64 addr = (uint64)bufva + i;
+      uint64 pa = lookup_pa((pagetable_t)current->pagetable, addr);
+      if (!pa) return i;
+      uint64 off = addr - ROUNDDOWN(addr, PGSIZE);
+
+      char ch = (char)console_getchar_blocking();
+      *((char *)pa + off) = ch;
+      i++;
+      if (ch == '\n') break;
+    }
+    return i;
+  }
+
   int i = 0;
   while (i < count) {
     uint64 addr = (uint64)bufva + i;
@@ -476,6 +509,10 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_set_stdout(a1);
     case SYS_user_read_stdin:
       return sys_user_read_stdin((char *)a1, a2);
+    case SYS_user_set_affinity:
+      return sys_user_set_affinity(a1);
+    case SYS_user_set_quiet:
+      return sys_user_set_quiet(a1);
     default:
       panic("Unknown syscall %ld \n", a0);
   }

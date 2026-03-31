@@ -11,6 +11,7 @@
 #include "ramdev.h"
 #include "rfs.h"
 #include "riscv.h"
+#include "sync_utils.h"
 #include "spike_interface/spike_file.h"
 #include "spike_interface/spike_utils.h"
 #include "util/functions.h"
@@ -62,7 +63,6 @@ proc_file_management *init_proc_file_management(void) {
 
   for (int fd = 0; fd < MAX_FILES; ++fd) pfiles->opened_files[fd].status = FD_NONE;
 
-  if (current != NULL) sprint("FS: created a file management struct for a process.\n");
   return pfiles;
 }
 

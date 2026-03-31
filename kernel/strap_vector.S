@@ -16,6 +16,14 @@ trap_sec_start:
 .globl smode_trap_vector
 .align 4
 smode_trap_vector:
+    # Distinguish trap origin:
+    #   SPP=0: trap from user mode, save user context into trapframe
+    #   SPP=1: trap from supervisor mode, save context on current kernel stack
+    csrr t0, sstatus
+    andi t0, t0, 0x100
+    bnez t0, .Ltrap_from_kernel
+
+    # -------------------- trap from user --------------------
     # swap a0 and sscratch, so that points a0 to the trapframe of current process
     csrrw a0, sscratch, a0
 
@@ -47,6 +55,21 @@ smode_trap_vector:
 
     # jump to smode_trap_handler() that is defined in kernel/trap.c
     jr t0
+
+.Ltrap_from_kernel:
+    # save full supervisor context on current kernel stack
+    addi sp, sp, -256
+    addi t6, sp, 0
+    store_all_registers
+
+    # handle kernel-origin trap in C
+    call smode_kernel_trap_handler
+
+    # restore context and return to supervisor mode
+    addi t6, sp, 0
+    restore_all_registers
+    addi sp, sp, 256
+    sret
 
 #
 # return from Supervisor mode to User mode, transition is made by using a trapframe,

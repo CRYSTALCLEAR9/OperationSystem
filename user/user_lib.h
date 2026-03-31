@@ -48,6 +48,8 @@ int pipe_u(int fds[2]);
 int set_stdin(int fd);
 int set_stdout(int fd);
 int read_stdin(void *buf, uint64 count);
+int set_affinity(int hartid);
+int set_quiet(int on);
 
 
 #endif

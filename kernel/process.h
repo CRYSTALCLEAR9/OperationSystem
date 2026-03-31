@@ -95,6 +95,8 @@ typedef struct process_t {
   uint64 pid;
   // process status
   int status;
+  // hart affinity mask (bit i means runnable on hart i)
+  uint64 hart_mask;
   // parent process
   struct process_t *parent;
   // next queue element

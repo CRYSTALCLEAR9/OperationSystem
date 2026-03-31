@@ -25,7 +25,7 @@ typedef struct node {
 } list_node;
 
 static list_node g_free_mem_list;
-static volatile int g_pmm_lock = 0;
+static volatile int g_pmm_lock __attribute__((aligned(8))) = 0;
 
 static inline int pa2page_idx(void *pa) {
   uint64 addr = (uint64)pa;
@@ -63,7 +63,6 @@ void free_page(void *pa) {
 }
 
 void *alloc_page(void) {
-  uint64 hartid = read_tp();
   spin_lock(&g_pmm_lock);
   list_node *n = g_free_mem_list.next;
   if (n) g_free_mem_list.next = n->next;
@@ -72,9 +71,6 @@ void *alloc_page(void) {
     int idx = pa2page_idx((void *)n);
     if (idx < 0) panic("alloc_page: invalid page index for 0x%lx\n", n);
     g_page_refcnt[idx] = 1;
-    if (g_multicore_boot_mode && hartid < NCPU && vm_alloc_stage[hartid]) {
-      sprint("hartid = %ld: alloc page 0x%x\n", hartid, n);
-    }
   }
   spin_unlock(&g_pmm_lock);
   return (void *)n;

@@ -4,20 +4,20 @@
  * codes are borrowed from riscv-pk (https://github.com/riscv/riscv-pk)
  */
 
-#include "atomic.h"
 #include "spike_htif.h"
 #include "util/functions.h"
 #include "util/snprintf.h"
 #include "spike_utils.h"
 #include "spike_file.h"
+#include "kernel/sync_utils.h"
 
 //=============    encapsulating htif syscalls, invoking Spike functions    =============
 long frontend_syscall(long n, uint64 a0, uint64 a1, uint64 a2, uint64 a3, uint64 a4,
       uint64 a5, uint64 a6) {
   static volatile uint64 magic_mem[8];
+  static volatile int frontend_lock __attribute__((aligned(8))) = 0;
 
-  static spinlock_t lock = SPINLOCK_INIT;
-  spinlock_lock(&lock);
+  spin_lock(&frontend_lock);
 
   magic_mem[0] = n;
   magic_mem[1] = a0;
@@ -32,7 +32,7 @@ long frontend_syscall(long n, uint64 a0, uint64 a1, uint64 a2, uint64 a3, uint64
 
   long ret = magic_mem[0];
 
-  spinlock_unlock(&lock);
+  spin_unlock(&frontend_lock);
   return ret;
 }
 
@@ -105,7 +105,7 @@ void do_panic(const char* s, ...) {
   va_list vl;
   va_start(vl, s);
 
-  sprint(s, vl);
+  vprintk(s, vl);
   shutdown(-1);
 
   va_end(vl);

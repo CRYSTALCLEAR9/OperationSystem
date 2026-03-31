@@ -17,9 +17,9 @@ static void handle_misaligned_store() { panic("Misaligned AMO!"); }
 
 // added @lab1_3
 static void handle_timer() {
-  int cpuid = 0;
-  // setup the timer fired at next time (TIMER_INTERVAL from now)
-  *(uint64*)CLINT_MTIMECMP(cpuid) = *(uint64*)CLINT_MTIMECMP(cpuid) + TIMER_INTERVAL;
+  uint64 hartid = read_tp();
+  // keep each hart's timer independent in SMP mode
+  *(uint64*)CLINT_MTIMECMP(hartid) = *(uint64*)CLINT_MTIME + TIMER_INTERVAL;
 
   // setup a soft interrupt in sip (S-mode Interrupt Pending) to be handled in S-mode
   write_csr(sip, SIP_SSIP);

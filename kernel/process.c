@@ -22,7 +22,7 @@ extern char trap_sec_start[];
 
 process procs[NPROC];
 process* g_current[NCPU] = {0};
-static volatile int g_proc_alloc_lock = 0;
+static volatile int g_proc_alloc_lock __attribute__((aligned(8))) = 0;
 
 #define HEAP_ALIGN 16
 
@@ -244,12 +244,16 @@ process* alloc_process() {
   procs[index].parent = NULL;
   procs[index].queue_next = NULL;
   procs[index].tick_count = 0;
+  if (g_active_harts >= 64)
+    procs[index].hart_mask = ~0ULL;
+  else
+    procs[index].hart_mask = (1ULL << g_active_harts) - 1;
   procs[index].stdin_fd = -1;
   procs[index].stdout_fd = -1;
   strcpy(procs[index].cwd, "/");
 
   procs[index].pfiles = init_proc_file_management();
-  if (current != NULL) {
+  if (current != NULL && !g_quiet_mode) {
     sprint("in alloc_proc. user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
            procs[index].trapframe, procs[index].trapframe->regs.sp, procs[index].kstack);
     sprint("in alloc_proc. build proc_file_management successfully.\n");
@@ -269,12 +273,13 @@ int free_process(process* proc) {
 }
 
 int do_fork(process* parent) {
-  sprint("will fork a child from parent %d.\n", parent->pid);
+  if (!g_quiet_mode) sprint("will fork a child from parent %ld.\n", parent->pid);
   process* child = alloc_process();
 
   strcpy(child->cwd, parent->cwd);
   child->stdin_fd = parent->stdin_fd;
   child->stdout_fd = parent->stdout_fd;
+  child->hart_mask = parent->hart_mask;
   copy_proc_file_management(child->pfiles, parent->pfiles);
   child->user_heap = parent->user_heap;
   memcpy(child->heap_blocks, parent->heap_blocks, sizeof(parent->heap_blocks));
@@ -302,9 +307,10 @@ int do_fork(process* parent) {
         }
         break;
       case CODE_SEGMENT:
-        sprint("do_fork map code segment at pa:%lx of parent to child at va:%lx.\n",
-               lookup_pa(parent->pagetable, parent->mapped_info[i].va),
-               parent->mapped_info[i].va);
+        if (!g_quiet_mode)
+          sprint("do_fork map code segment at pa:%lx of parent to child at va:%lx.\n",
+                 lookup_pa(parent->pagetable, parent->mapped_info[i].va),
+                 parent->mapped_info[i].va);
         share_region_with_child_cow(parent, child, &parent->mapped_info[i]);
         child->mapped_info[child->total_mapped_region] = parent->mapped_info[i];
         child->total_mapped_region++;

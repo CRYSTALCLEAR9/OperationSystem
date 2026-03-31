@@ -45,6 +45,8 @@
 #define SYS_user_set_stdin (SYS_user_base + 41)
 #define SYS_user_set_stdout (SYS_user_base + 42)
 #define SYS_user_read_stdin (SYS_user_base + 43)
+#define SYS_user_set_affinity (SYS_user_base + 44)
+#define SYS_user_set_quiet (SYS_user_base + 45)
 
 long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, long a7);
 

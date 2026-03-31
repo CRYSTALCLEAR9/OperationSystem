@@ -3,23 +3,54 @@
  */
 
 #include "sched.h"
+#include "config.h"
+#include "riscv.h"
 #include "spike_interface/spike_utils.h"
+#include "sync_utils.h"
 
 process* ready_queue_head = NULL;
-static int first_schedule_done = 0;
+static volatile int g_ready_queue_lock __attribute__((aligned(8))) = 0;
+static int first_schedule_done[NCPU] = {0};
+static int proc_can_run_on_hart(process *proc, uint64 hartid) {
+  return (proc->hart_mask & (1ULL << hartid)) != 0;
+}
+
+static process *dequeue_ready_for_hart(uint64 hartid) {
+  process *prev = NULL;
+  process *p = ready_queue_head;
+  while (p) {
+    if (proc_can_run_on_hart(p, hartid)) {
+      if (prev)
+        prev->queue_next = p->queue_next;
+      else
+        ready_queue_head = p->queue_next;
+      p->queue_next = NULL;
+      return p;
+    }
+    prev = p;
+    p = p->queue_next;
+  }
+  return NULL;
+}
 
 //
 // insert a process, proc, into the END of ready queue.
 //
 void insert_to_ready_queue( process* proc ) {
-  if (!(current == NULL && proc->pid == 0)) {
-    sprint( "going to insert process %d to ready queue.\n", proc->pid );
+  spin_lock(&g_ready_queue_lock);
+  if (proc->status == RUNNING && proc != current) {
+    spin_unlock(&g_ready_queue_lock);
+    return;
+  }
+  if (!g_quiet_mode && !(current == NULL && proc->pid == 0)) {
+    sprint("going to insert process %ld to ready queue.\n", proc->pid);
   }
   // if the queue is empty in the beginning
   if( ready_queue_head == NULL ){
     proc->status = READY;
     proc->queue_next = NULL;
     ready_queue_head = proc;
+    spin_unlock(&g_ready_queue_lock);
     return;
   }
 
@@ -27,14 +58,21 @@ void insert_to_ready_queue( process* proc ) {
   process *p;
   // browse the ready queue to see if proc is already in-queue
   for( p=ready_queue_head; p->queue_next!=NULL; p=p->queue_next )
-    if( p == proc ) return;  //already in queue
+    if( p == proc ) {
+      spin_unlock(&g_ready_queue_lock);
+      return;  //already in queue
+    }
 
   // p points to the last element of the ready queue
-  if( p==proc ) return;
+  if( p==proc ) {
+    spin_unlock(&g_ready_queue_lock);
+    return;
+  }
   p->queue_next = proc;
   proc->status = READY;
   proc->queue_next = NULL;
 
+  spin_unlock(&g_ready_queue_lock);
   return;
 }
 
@@ -46,35 +84,45 @@ void insert_to_ready_queue( process* proc ) {
 //
 extern process procs[NPROC];
 void schedule() {
-  if ( !ready_queue_head ){
-    // by default, if there are no ready process, and all processes are in the status of
-    // FREE and ZOMBIE, we should shutdown the emulated RISC-V machine.
-    int should_shutdown = 1;
+  for (;;) {
+    spin_lock(&g_ready_queue_lock);
+    uint64 hartid = read_tp();
+    process *next = dequeue_ready_for_hart(hartid);
+    if (next) {
+      next->status = RUNNING;
+      current = next;
+      spin_unlock(&g_ready_queue_lock);
 
-    for( int i=0; i<NPROC; i++ )
-      if( (procs[i].status != FREE) && (procs[i].status != ZOMBIE) ){
-        should_shutdown = 0;
-        sprint( "ready queue empty, but process %d is not in free/zombie state:%d\n", 
-          i, procs[i].status );
+      if (first_schedule_done[hartid]) {
+        if (!g_quiet_mode) sprint("going to schedule process %ld to run.\n", current->pid);
+      } else {
+        first_schedule_done[hartid] = 1;
       }
-
-    if( should_shutdown ){
-      sprint( "no more ready processes, system shutdown now.\n" );
-      shutdown( 0 );
-    }else{
-      panic( "Not handled: we should let system wait for unfinished processes.\n" );
+      switch_to(current);
+      return;
     }
-  }
+    spin_unlock(&g_ready_queue_lock);
 
-  process *next = ready_queue_head;
-  current = next;
-  assert( current->status == READY );
-  ready_queue_head = ready_queue_head->queue_next;
+    int active = 0;
+    for (int i = 0; i < NPROC; i++) {
+      if (procs[i].status != FREE && procs[i].status != ZOMBIE) {
+        active = 1;
+        break;
+      }
+    }
 
-  current->status = RUNNING;
-  if (!(first_schedule_done == 0 && current->pid == 0)) {
-    sprint( "going to schedule process %d to run.\n", current->pid );
+    if (!active) {
+      if (read_tp() == 0) {
+        sprint("no more ready processes, system shutdown now.\n");
+        shutdown(0);
+      }
+      intr_off();
+      write_csr(sie, 0);
+      while (1) asm volatile("wfi");
+    }
+
+    // No runnable process for this hart right now.
+    // Keep polling: secondary harts may not get a wakeup source in all paths.
+    asm volatile("nop");
   }
-  first_schedule_done = 1;
-  switch_to( current );
 }

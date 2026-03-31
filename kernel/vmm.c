@@ -198,7 +198,7 @@ void user_vm_unmap(pagetable_t page_dir, uint64 va, uint64 size, int free) {
 // debug function, print the vm space of a process. added @lab3_1
 //
 void print_proc_vmspace(process* proc) {
-  sprint( "======\tbelow is the vm space of process%d\t========\n", proc->pid );
+  sprint("======\tbelow is the vm space of process%ld\t========\n", proc->pid);
   for( int i=0; i<proc->total_mapped_region; i++ ){
     sprint( "-va:%lx, npage:%d, ", proc->mapped_info[i].va, proc->mapped_info[i].npages);
     switch(proc->mapped_info[i].seg_type){

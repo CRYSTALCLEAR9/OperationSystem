@@ -1,8 +1,28 @@
-/bin/app_mkdir /RAMDISK0/sub_dir
-/bin/app_touch /RAMDISK0/sub_dir/ramfile1
-/bin/app_touch /RAMDISK0/sub_dir/ramfile2
-/bin/app_echo /RAMDISK0/sub_dir/ramfile1
-/bin/app_cat /RAMDISK0/sub_dir/ramfile1
-/bin/app_ls /RAMDISK0/sub_dir
-/bin/app_ls /RAMDISK0
-END END
+spike -p2 obj/riscv-pke /bin/app_ishell
+
+/bin/app_print_backtrace
+/bin/app_errorline
+/bin/app_run_app01
+/bin/app_sum_sequence
+/bin/app_singlepageheap
+/bin/app_run_alloc
+/bin/app_wait
+/bin/app_semaphore
+/bin/app_cow
+/bin/app_relativepath
+/bin/app_exec
+
+/bin/app_ls /
+
+/bin/app_bgwork alpha &
+/bin/app_bgwork beta &
+waitall
+
+/bin/app_pipe_echo hello_bonus_pipe | /bin/app_upper
+
+history
+setenv TARGET /RAMDISK0
+printenv TARGET
+
+/bin/app_stress_proc 12
+/bin/app_stress_io $TARGET/io.txt

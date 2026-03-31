@@ -33,7 +33,7 @@ extern uint64 g_mem_size;
 // registers when interrupt hapens in M mode. added @lab1_2
 riscv_regs g_itrframe[NCPU];
 volatile int g_active_harts = 1;
-static volatile int g_boot_barrier = 0;
+static volatile int g_boot_barrier __attribute__((aligned(8))) = 0;
 
 struct cpu_scan {
   int count;
@@ -136,7 +136,7 @@ void m_start(uintptr_t hartid, uintptr_t dtb) {
     ;
   sync_barrier(&g_boot_barrier, g_active_harts);
 
-  sprint("In m_start, hartid:%d\n", hartid);
+  sprint("In m_start, hartid:%ld\n", hartid);
 
   // save the address of trap frame for interrupt in M mode to "mscratch". added @lab1_2
   write_csr(mscratch, &g_itrframe[hartid]);

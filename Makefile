@@ -37,6 +37,7 @@ SPIKE_INF_OBJS := $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(SPIKE_INF_CPPS))
 SPIKE_INF_LIB  := $(OBJ_DIR)/spike_interface.a
 
 USER_APPS := \
+	app_ishell \
 	app_shell \
 	app_ls \
 	app_mkdir \
@@ -58,6 +59,9 @@ USER_APPS := \
 	app_bgwork \
 	app_stress_proc \
 	app_stress_io \
+	app_stress_suite \
+	app_run_app01 \
+	app_run_alloc \
 	app0 \
 	app1 \
 	app_alloc0 \

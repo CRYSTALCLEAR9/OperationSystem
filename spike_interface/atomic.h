@@ -5,13 +5,12 @@
 #ifndef _RISCV_ATOMIC_H_
 #define _RISCV_ATOMIC_H_
 
-// Currently, interrupts are always disabled in M-mode.
-// todo: for PKE, wo turn on irq in lab_1_3_timer, so wo have to implement these two functions.
+// todo: for PKE, we turn on irq in lab_1_3_timer, so we have to implement these two functions.
 #define disable_irqsave() (0)
 #define enable_irqrestore(flags) ((void)(flags))
 
 typedef struct {
-  int lock;
+  volatile int lock;
   // For debugging:
   char* name;       // Name of lock.
   struct cpu* cpu;  // The cpu holding the lock.
@@ -21,28 +20,12 @@ typedef struct {
   { 0 }
 
 #define mb() asm volatile("fence" ::: "memory")
-#define atomic_set(ptr, val) (*(volatile typeof(*(ptr))*)(ptr) = val)
-#define atomic_read(ptr) (*(volatile typeof(*(ptr))*)(ptr))
-
-#define atomic_binop(ptr, inc, op)         \
-  ({                                       \
-    long flags = disable_irqsave();        \
-    typeof(*(ptr)) res = atomic_read(ptr); \
-    atomic_set(ptr, op);                   \
-    enable_irqrestore(flags);              \
-    res;                                   \
-  })
-#define atomic_add(ptr, inc) atomic_binop(ptr, inc, res + (inc))
-#define atomic_or(ptr, inc) atomic_binop(ptr, inc, res | (inc))
-#define atomic_swap(ptr, inc) atomic_binop(ptr, inc, (inc))
-#define atomic_cas(ptr, cmp, swp)                           \
-  ({                                                        \
-    long flags = disable_irqsave();                         \
-    typeof(*(ptr)) res = *(volatile typeof(*(ptr))*)(ptr);  \
-    if (res == (cmp)) *(volatile typeof(ptr))(ptr) = (swp); \
-    enable_irqrestore(flags);                               \
-    res;                                                    \
-  })
+#define atomic_set(ptr, val) __atomic_store_n((ptr), (val), __ATOMIC_SEQ_CST)
+#define atomic_read(ptr) __atomic_load_n((ptr), __ATOMIC_SEQ_CST)
+#define atomic_add(ptr, inc) __sync_fetch_and_add((ptr), (inc))
+#define atomic_or(ptr, inc) __sync_fetch_and_or((ptr), (inc))
+#define atomic_swap(ptr, inc) __sync_lock_test_and_set((ptr), (inc))
+#define atomic_cas(ptr, cmp, swp) __sync_val_compare_and_swap((ptr), (cmp), (swp))
 
 static inline int spinlock_trylock(spinlock_t* lock) {
   int res = atomic_swap(&lock->lock, -1);

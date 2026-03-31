@@ -19,17 +19,9 @@
 
 volatile int g_multicore_boot_mode = 0;
 volatile int g_boot_app_count = 0;
-static volatile int g_smode_init_ready = 0;
-
-static int boot_participating_harts(void) {
-  return g_boot_app_count < g_active_harts ? g_boot_app_count : g_active_harts;
-}
-
-static void idle_hart_forever(void) {
-  intr_off();
-  write_csr(sie, 0);
-  while (1) asm volatile("wfi");
-}
+volatile int g_quiet_mode = 0;
+static volatile int g_smode_init_ready __attribute__((aligned(8))) = 0;
+static volatile int g_smp_sched_ready __attribute__((aligned(8))) = 0;
 
 //
 // trap_sec_start points to the beginning of S-mode trap segment (i.e., the entry point of
@@ -78,29 +70,12 @@ static size_t parse_args(arg_buf *arg_bug_msg) {
 // load the elf, and construct a "process" (with only a trapframe).
 // load_bincode_from_host_elf is defined in elf.c
 //
-process* load_user_program() {
-  process* proc;
-
-  proc = alloc_process();
+static void spawn_process_from_path(const char *path, uint64 hart_mask) {
+  process *proc = alloc_process();
   sprint("User application is loading.\n");
-
-  arg_buf arg_bug_msg;
-
-  // retrieve command line arguements
-  size_t argc = parse_args(&arg_bug_msg);
-  if (!argc) panic("You need to specify the application program!\n");
-
-  load_bincode_from_host_elf(proc, arg_bug_msg.argv[0]);
-  return proc;
-}
-
-static void load_user_program_for_hart(process *proc, int app_index) {
-  arg_buf arg_bug_msg;
-  size_t argc = parse_args(&arg_bug_msg);
-  if (!argc || app_index >= (int)argc) panic("Missing application for hart %d.\n", app_index);
-
-  sprint("hartid = %ld: User application is loading.\n", read_tp());
-  load_bincode_from_host_elf(proc, arg_bug_msg.argv[app_index]);
+  load_bincode_from_host_elf(proc, (char *)path);
+  proc->hart_mask = hart_mask;
+  insert_to_ready_queue(proc);
 }
 
 //
@@ -113,7 +88,7 @@ int s_start(void) {
   if (!argc) panic("You need to specify the application program!\n");
   if (hartid == 0) {
     g_boot_app_count = argc;
-    g_multicore_boot_mode = (g_active_harts > 1 && argc > 1) ? 1 : 0;
+    g_multicore_boot_mode = (g_active_harts > 1) ? 1 : 0;
   }
 
   // in the beginning, we use Bare mode (direct) memory mapping as in lab1.
@@ -137,31 +112,25 @@ int s_start(void) {
   }
   sync_barrier(&g_smode_init_ready, g_active_harts);
 
-  if (!g_multicore_boot_mode && hartid != 0) idle_hart_forever();
-
   // now, switch to paging mode by turning on paging (SV39)
   enable_paging();
   // the code now formally works in paging mode, meaning the page table is now in use.
   if (!g_multicore_boot_mode || hartid == 0) sprint("kernel page table is on \n");
 
-  if (g_multicore_boot_mode) {
-    if ((int)hartid < boot_participating_harts()) {
-      process *proc = alloc_process();
-      sprint("hartid = %ld: user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
-             hartid, proc->trapframe, proc->trapframe->regs.sp, proc->kstack);
-      load_user_program_for_hart(proc, hartid);
-      sprint("hartid = %ld: Switch to user mode...\n", hartid);
-      vm_alloc_stage[hartid] = 1;
-      switch_to(proc);
-    }
-    idle_hart_forever();
-  } else {
-    process *proc = load_user_program();
-    sprint("Switch to user mode...\n");
-    vm_alloc_stage[hartid] = 1;
-    insert_to_ready_queue(proc);
-    schedule();
+  vm_alloc_stage[hartid] = 1;
+
+  uint64 all_mask = (g_active_harts >= 64) ? ~0ULL : ((1ULL << g_active_harts) - 1);
+  if ((size_t)hartid < argc) {
+    uint64 mask = (hartid < 64) ? (1ULL << hartid) : all_mask;
+    spawn_process_from_path(arg_bug_msg.argv[hartid], mask);
   }
+  if (hartid == 0) {
+    for (size_t i = g_active_harts; i < argc; i++) {
+      spawn_process_from_path(arg_bug_msg.argv[i], all_mask);
+    }
+  }
+  sync_barrier(&g_smp_sched_ready, g_active_harts);
+  schedule();
 
   // we should never reach here.
   return 0;

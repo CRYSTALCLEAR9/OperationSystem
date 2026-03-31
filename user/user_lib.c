@@ -169,3 +169,11 @@ int set_stdout(int fd) {
 int read_stdin(void *buf, uint64 count) {
   return do_user_call(SYS_user_read_stdin, (uint64)buf, count, 0, 0, 0, 0, 0);
 }
+
+int set_affinity(int hartid) {
+  return do_user_call(SYS_user_set_affinity, hartid, 0, 0, 0, 0, 0, 0);
+}
+
+int set_quiet(int on) {
+  return do_user_call(SYS_user_set_quiet, on, 0, 0, 0, 0, 0, 0);
+}

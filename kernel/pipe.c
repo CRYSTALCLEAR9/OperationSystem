@@ -5,7 +5,7 @@
 #include "util/string.h"
 #include "vfs.h"
 
-static volatile int g_pipe_lock = 0;
+static volatile int g_pipe_lock __attribute__((aligned(8))) = 0;
 
 pipe_t *pipe_alloc(void) {
   pipe_t *pipe = (pipe_t *)alloc_page();

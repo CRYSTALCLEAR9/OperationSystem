@@ -6,6 +6,7 @@
 extern volatile int g_active_harts;
 extern volatile int g_multicore_boot_mode;
 extern volatile int g_boot_app_count;
+extern volatile int g_quiet_mode;
 
 static inline void spin_lock(volatile int *lock) {
   int old;

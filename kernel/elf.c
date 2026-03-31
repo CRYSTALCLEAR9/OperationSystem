@@ -347,10 +347,10 @@ elf_status elf_load(elf_ctx *ctx) {
 
     if (ph_addr.flags == (SEGMENT_READABLE | SEGMENT_EXECUTABLE)) {
       proc->mapped_info[slot].seg_type = CODE_SEGMENT;
-      if (proc->pid != 0) sprint("CODE_SEGMENT added at mapped info offset:%d\n", slot);
+      if (!g_quiet_mode && proc->pid != 0) sprint("CODE_SEGMENT added at mapped info offset:%d\n", slot);
     } else if (ph_addr.flags == (SEGMENT_READABLE | SEGMENT_WRITABLE)) {
       proc->mapped_info[slot].seg_type = DATA_SEGMENT;
-      if (proc->pid != 0) sprint("DATA_SEGMENT added at mapped info offset:%d\n", slot);
+      if (!g_quiet_mode && proc->pid != 0) sprint("DATA_SEGMENT added at mapped info offset:%d\n", slot);
     } else {
       panic("unknown program segment encountered, segment flag:%d.\n", ph_addr.flags);
     }
@@ -468,11 +468,6 @@ static void resolve_elf_host_path(const char *filename, char *host_path, uint64 
 }
 
 void load_bincode_from_host_elf(process *p, char *filename) {
-  if (g_multicore_boot_mode)
-    sprint("hartid = %ld: Application: %s\n", read_tp(), filename);
-  else
-    sprint("Application: %s\n", filename);
-
   reset_runtime_debug_info();
 
   elf_ctx elfloader;
@@ -490,9 +485,4 @@ void load_bincode_from_host_elf(process *p, char *filename) {
   p->trapframe->epc = elfloader.ehdr.entry;
   spike_file_close(info.f);
 
-  if (g_multicore_boot_mode)
-    sprint("hartid = %ld: Application program entry point (virtual address): 0x%lx\n",
-           read_tp(), p->trapframe->epc);
-  else
-    sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
 }

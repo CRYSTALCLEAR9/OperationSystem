@@ -10,6 +10,7 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "sched.h"
+#include "sync_utils.h"
 #include "util/functions.h"
 #include "memlayout.h"
 #include "string.h"
@@ -40,7 +41,6 @@ static uint64 g_ticks = 0;
 // added @lab1_3
 //
 void handle_mtimer_trap() {
-  sprint("Ticks %d\n", g_ticks);
   // TODO (lab1_3): increase g_ticks to record this "tick", and then clear the "SIP"
   // field in sip register.
   // hint: use write_csr to disable the SIP_SSIP bit in sip.
@@ -61,7 +61,7 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
       uint64 va = ROUNDDOWN(stval, PGSIZE);
       pte_t *pte = page_walk(current->pagetable, va, 0);
       if (pte && (*pte & PTE_V) && (*pte & PTE_COW)) {
-        if (stval >= current->user_heap.heap_bottom && stval < current->user_heap.heap_top)
+        if (!g_quiet_mode && stval >= current->user_heap.heap_bottom && stval < current->user_heap.heap_top)
           sprint("handle_page_fault: %lx\n", stval);
         uint64 old_pa = PTE2PA(*pte);
         void *new_pa = alloc_page();
@@ -77,7 +77,7 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
       }
 
       if (stval >= current->trapframe->regs.sp && stval < USER_STACK_TOP) {
-        sprint("handle_page_fault: %lx\n", stval);
+        if (!g_quiet_mode) sprint("handle_page_fault: %lx\n", stval);
         mapped_region *stack = &current->mapped_info[STACK_SEGMENT];
         uint64 old_base = stack->va;
         for (uint64 page_va = va; page_va < old_base; page_va += PGSIZE) {
@@ -110,6 +110,7 @@ void rrsched() {
   // hint: increase the tick_count member of current process by one, if it is bigger than
   // TIME_SLICE_LEN (means it has consumed its time slice), change its status into READY,
   // place it in the rear of ready queue, and finally schedule next process to run.
+  if (current == NULL) return;
   current->tick_count++;
   if(current->tick_count >= TIME_SLICE_LEN){
       current->tick_count = 0;
@@ -119,6 +120,20 @@ void rrsched() {
 
 }
 
+void smode_kernel_trap_handler(void) {
+  uint64 cause = read_csr(scause);
+  switch (cause) {
+    case CAUSE_MTIMER_S_TRAP:
+      handle_mtimer_trap();
+      break;
+    default:
+      sprint("kernel_trap: unexpected scause %p\n", cause);
+      sprint("             sepc=%p stval=%p\n", read_csr(sepc), read_csr(stval));
+      panic("unexpected trap happened in S-mode kernel context.\n");
+      break;
+  }
+}
+
 //
 // kernel/smode_trap.S will pass control to smode_trap_handler, when a trap happens
 // in S-mode.
@@ -126,7 +141,8 @@ void rrsched() {
 void smode_trap_handler(void) {
   // make sure we are in User mode before entering the trap handling.
   // we will consider other previous case in lab1_3 (interrupt).
-  if ((read_csr(sstatus) & SSTATUS_SPP) != 0) panic("usertrap: not from user mode");
+  if ((read_csr(sstatus) & SSTATUS_SPP) != 0)
+    panic("smode_trap_handler: expected trap from user mode");
 
   assert(current);
   // save user process counter.
